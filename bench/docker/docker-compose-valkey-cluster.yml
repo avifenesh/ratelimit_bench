@@ -1,0 +1,102 @@
+services:
+  # Valkey Cluster with 3 shards (3 primaries, 3 replicas)
+  valkey-node1:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8081:8080"
+    volumes:
+      - valkey-node1-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  valkey-node2:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8082:8080"
+    volumes:
+      - valkey-node2-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  valkey-node3:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8083:8080"
+    volumes:
+      - valkey-node3-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  valkey-node4:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8084:8080"
+    volumes:
+      - valkey-node4-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  valkey-node5:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8085:8080"
+    volumes:
+      - valkey-node5-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  valkey-node6:
+    image: "valkey/valkey:latest"
+    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "8086:8080"
+    volumes:
+      - valkey-node6-data:/data
+      - ./valkey.conf:/etc/valkey/valkey.conf
+    networks:
+      - valkey-cluster-network
+
+  # Valkey cluster setup
+  valkey-cluster-setup:
+    image: "valkey/valkey:latest"
+    command: >
+      bash -c "sleep 5 && 
+      echo 'yes' | valkey-cli --cluster create 
+        valkey-node1:8080 
+        valkey-node2:8080 
+        valkey-node3:8080 
+        valkey-node4:8080 
+        valkey-node5:8080 
+        valkey-node6:8080 
+        --cluster-replicas 1"
+    networks:
+      - valkey-cluster-network
+    depends_on:
+      - valkey-node1
+      - valkey-node2
+      - valkey-node3
+      - valkey-node4
+      - valkey-node5
+      - valkey-node6
+
+networks:
+  valkey-cluster-network:
+    driver: bridge
+
+volumes:
+  valkey-node1-data:
+  valkey-node2-data:
+  valkey-node3-data:
+  valkey-node4-data:
+  valkey-node5-data:
+  valkey-node6-data:

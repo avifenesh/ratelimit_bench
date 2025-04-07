@@ -1,0 +1,96 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7
+    container_name: benchmark-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    cap_add:
+      - SYS_RESOURCE
+    networks:
+      - benchmark_network
+
+  valkey:
+    image: valkey/valkey:8.1
+    container_name: benchmark-valkey
+    ports:
+      - "8080:6379"
+    command: valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    cap_add:
+      - SYS_RESOURCE
+    networks:
+      - benchmark_network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    command: --redis.addr=redis://redis:6379
+    networks:
+      - benchmark_network
+    depends_on:
+      - redis
+
+  valkey-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: valkey-exporter
+    ports:
+      - "9122:9121"
+    command: --redis.addr=redis://valkey:6379
+    networks:
+      - benchmark_network
+    depends_on:
+      - valkey
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - benchmark_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - benchmark_network
+    depends_on:
+      - prometheus
+
+networks:
+  benchmark_network:
+    driver: bridge

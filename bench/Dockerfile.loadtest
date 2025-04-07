@@ -1,0 +1,22 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy application code
+COPY . .
+
+# Expose any needed ports
+EXPOSE 8080
+
+# Set default environment variables
+ENV TARGET_URL=http://api-server:3000/api
+ENV CONCURRENCY=50
+ENV DURATION=30
+ENV REQUEST_TYPE=light
+
+# Command to run the load test
+CMD ["node", "src/loadtest/run.js"]

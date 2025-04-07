@@ -1,0 +1,96 @@
+services:
+  # Redis Cluster with 3 shards (3 primaries, 3 replicas)
+  redis-node1:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6371:6379"
+    volumes:
+      - redis-node1-data:/data
+    networks:
+      - redis-cluster-network
+
+  redis-node2:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6372:6379"
+    volumes:
+      - redis-node2-data:/data
+    networks:
+      - redis-cluster-network
+
+  redis-node3:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6373:6379"
+    volumes:
+      - redis-node3-data:/data
+    networks:
+      - redis-cluster-network
+
+  redis-node4:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6374:6379"
+    volumes:
+      - redis-node4-data:/data
+    networks:
+      - redis-cluster-network
+
+  redis-node5:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6375:6379"
+    volumes:
+      - redis-node5-data:/data
+    networks:
+      - redis-cluster-network
+
+  redis-node6:
+    image: "redis:latest"
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "6376:6379"
+    volumes:
+      - redis-node6-data:/data
+    networks:
+      - redis-cluster-network
+
+  # Redis cluster setup
+  redis-cluster-setup:
+    image: "redis:latest"
+    command: >
+      bash -c "sleep 5 && 
+      echo 'yes' | redis-cli --cluster create 
+        redis-node1:6379 
+        redis-node2:6379 
+        redis-node3:6379 
+        redis-node4:6379 
+        redis-node5:6379 
+        redis-node6:6379 
+        --cluster-replicas 1"
+    networks:
+      - redis-cluster-network
+    depends_on:
+      - redis-node1
+      - redis-node2
+      - redis-node3
+      - redis-node4
+      - redis-node5
+      - redis-node6
+
+networks:
+  redis-cluster-network:
+    driver: bridge
+
+volumes:
+  redis-node1-data:
+  redis-node2-data:
+  redis-node3-data:
+  redis-node4-data:
+  redis-node5-data:
+  redis-node6-data:

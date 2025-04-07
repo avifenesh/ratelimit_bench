@@ -1,0 +1,40 @@
+# Node.js dependencies
+node_modules/
+package-lock.json
+npm-debug.log
+# Database files
+dump.rdb
+nodes.conf
+*.aof
+appendonly.aof
+
+# Benchmark results
+results/
+bench/results/
+*.log
+benchmark.log
+
+# Docker & monitoring artifacts
+docker-compose.override.yml
+prometheus_data/
+grafana_data/
+
+# Runtime files
+*.pid
+*.sock
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+
+# Editor and OS files
+.vscode/
+
+# Test files
+test-results/
+
+# k6 output files
+summary.json
+result_*.json
