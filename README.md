@@ -83,7 +83,7 @@ npm run docker:redis-cluster:up
 # Run the server with specific configuration
 npm run start:valkey-glide
 npm run start:valkey-io
-npm run start:redis-ioredis
+npm run start:ioredis
 npm run start:redis-node
 npm run start:valkey-cluster
 npm run start:redis-cluster

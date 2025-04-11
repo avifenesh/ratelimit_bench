@@ -4,7 +4,7 @@
  */
 
 import * as ioredis from "ioredis";
-import { Redis as Valkey, Cluster as iovalkeyCluster } from "iovalkey";
+import { Redis as Valkey, Cluster as ValkeyCluster } from "iovalkey";
 import { GlideClient, GlideClusterClient, Logger } from "@valkey/valkey-glide";
 import config from "../config/index.js";
 
@@ -13,7 +13,7 @@ type RateLimiterClient =
   | ioredis.Redis
   | ioredis.Cluster
   | Valkey
-  | iovalkeyCluster
+  | ValkeyCluster
   | GlideClient
   | GlideClusterClient;
 
@@ -81,7 +81,7 @@ export async function createClient(): Promise<RateLimiterClient> {
       if (config.useValkeyCluster) {
         console.log("Connecting to Valkey Cluster using iovalkey client");
 
-        clientInstance = new iovalkeyCluster(
+        clientInstance = new ValkeyCluster(
           config.valkeyClusterNodes.map((node) => ({
             host: node.host,
             port: node.port,
@@ -116,7 +116,7 @@ export async function createClient(): Promise<RateLimiterClient> {
       break;
     }
 
-    case "redis-ioredis": {
+    case "ioredis": {
       if (config.useRedisCluster) {
         console.log("Connecting to Redis Cluster using ioredis");
 
@@ -198,14 +198,16 @@ export async function closeClient(): Promise<void> {
       clientInstance instanceof GlideClient ||
       clientInstance instanceof GlideClusterClient
     ) {
-      clientInstance.close();
+      // For Valkey Glide clients, use close() method
+      await clientInstance.close();
     } else if (
       clientInstance instanceof ioredis.Redis ||
       clientInstance instanceof ioredis.Cluster ||
       clientInstance instanceof Valkey ||
-      clientInstance instanceof iovalkeyCluster
+      clientInstance instanceof ValkeyCluster
     ) {
-      clientInstance.disconnect();
+      // For ioredis and iovalkey clients, use quit() for graceful disconnect
+      await clientInstance.quit();
     }
   } catch (err) {
     console.error("Error closing client:", err);

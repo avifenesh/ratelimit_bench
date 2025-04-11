@@ -42,7 +42,7 @@ export async function createRateLimiter(): Promise<RateLimiterAbstract> {
       console.log("Using RateLimiterValkey");
       rateLimiter = new RateLimiterValkey(rateLimitOptions);
       break;
-    case "redis-ioredis":
+    case "ioredis":
       console.log("Using RateLimiterRedis");
       rateLimiter = new RateLimiterRedis(rateLimitOptions);
       break;

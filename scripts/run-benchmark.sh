@@ -20,14 +20,13 @@ DEFAULT_REQUEST_TYPES=("light" "heavy")
 # Rate limiter types with Valkey implementations first (per project priority)
 DEFAULT_RATE_LIMITER_TYPES=(
     # Standalone configurations
-    "valkey-glide" 
-    "valkey-io" 
-    "redis-ioredis" 
-    "redis-node"
+  "valkey-glide"
+  "valkey-io"
+  "ioredis"
     # Cluster configurations
     "valkey-glide:cluster"
     "valkey-io:cluster"
-    "redis-ioredis:cluster"
+    "ioredis:cluster"
 )
 
 # Parse command line arguments
@@ -136,7 +135,7 @@ start_server() {
     sleep 10 # Increased wait time
 
     # Set environment variables for server
-    export MODE=${rate_limiter_type} # Pass the full mode like 'redis-ioredis'
+    export MODE=${rate_limiter_type} # Pass the full mode like 'ioredis'
     
     # Cluster flags are already set in the conditional logic above
     # Set connection details
