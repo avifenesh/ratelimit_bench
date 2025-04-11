@@ -1,60 +1,30 @@
-import fastify from "fastify";
-import routes from "./routes/index.js";
-import {
-  createRateLimiter,
-  closeRateLimiter,
-} from "./lib/rateLimiterFactory.js";
-import config from "./config/index.js";
-import * as process from "process";
+import Fastify from "fastify";
+import { createRateLimiter } from "../lib/rateLimiterFactory.js";
+import { registerRoutes } from "./routes/index.js";
+import { getConfig } from "./config/index.js";
 
-const createServer = () => {
-  const server = fastify({
-    logger: {
-      level: config.logLevel,
-      transport: {
-        target: "pino-pretty",
-      },
-    },
-  });
+const config = getConfig();
+const app = Fastify({
+  logger: {
+    level: config.logLevel,
+  },
+});
 
-  server.register(routes);
+// Create and register the appropriate rate limiter
+const rateLimiter = createRateLimiter(config.mode, config);
 
-  return server;
-};
-
-const start = async () => {
-  await createRateLimiter();
-
-  const server = createServer();
-
-  try {
-    await server.listen({ port: config.port, host: "0.0.0.0" });
-    console.log(`Server listening on port ${config.port}`);
-    console.log(`Rate limiter mode: ${config.mode}`);
-    console.log(`${config.useValkeyCluster ? "Using Valkey Cluster" : ""}`);
-    console.log(`${config.useRedisCluster ? "Using Redis Cluster" : ""}`);
-  } catch (error) {
-    // Type assertion for error
-    const err = error as Error;
-    server.log.error(err);
-    process.exit(1);
-  }
-
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("Stopping server...");
-    await closeRateLimiter();
-    await server.close();
-    process.exit(0);
-  });
-
-  process.on("SIGTERM", async () => {
-    console.log("Stopping server...");
-    await closeRateLimiter();
-    await server.close();
-    process.exit(0);
-  });
-};
+// Register routes
+registerRoutes(app, { rateLimiter, config });
 
 // Start the server
+const start = async () => {
+  try {
+    await app.listen({ port: config.port, host: "0.0.0.0" });
+    console.log(`Server listening on http://0.0.0.0:${config.port}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
+  }
+};
+
 start();

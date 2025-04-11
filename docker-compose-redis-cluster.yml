@@ -86,6 +86,7 @@ services:
 
 networks:
   redis-cluster-network:
+    driver: bridge
 
 volumes:
   redis-node1-data:

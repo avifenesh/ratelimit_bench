@@ -6,7 +6,9 @@
 import * as ioredis from "ioredis";
 import { Redis as Valkey, Cluster as ValkeyCluster } from "iovalkey";
 import { GlideClient, GlideClusterClient, Logger } from "@valkey/valkey-glide";
-import config from "../config/index.js";
+import { getConfig } from "../config/index.js";
+
+const config = getConfig();
 
 // Define a common client type alias
 type RateLimiterClient =
@@ -35,15 +37,17 @@ export async function createClient(): Promise<RateLimiterClient> {
       // Turn off logging for performance optimization
       Logger.init("off");
 
-      if (config.useValkeyCluster) {
+      if (config.valkey.cluster) {
         console.log("Connecting to Valkey Cluster using valkey-glide client");
 
         // Configure cluster options with optimized settings
         clientInstance = await GlideClusterClient.createClient({
-          addresses: config.valkeyClusterNodes.map((node) => ({
-            host: node.host,
-            port: node.port,
-          })),
+          addresses:
+            config.valkey.clusterNodes?.map((node) => {
+              const [host, portStr] = node.split(":");
+              const port = parseInt(portStr, 10);
+              return { host, port };
+            }) || [],
           // Optimized settings for Valkey Cluster
           useTLS: false,
           requestTimeout: 3000,
@@ -56,18 +60,18 @@ export async function createClient(): Promise<RateLimiterClient> {
         });
       } else {
         console.log(
-          `Connecting to Valkey at ${config.valkeyHost}:${config.valkeyPort} using valkey-glide client`
+          `Connecting to Valkey at ${config.valkey.host}:${config.valkey.port} using valkey-glide client`
         );
 
         // Configure standalone options with optimized settings
         clientInstance = await GlideClient.createClient({
           addresses: [
             {
-              host: config.valkeyHost,
-              port: config.valkeyPort,
+              host: config.valkey.host,
+              port: config.valkey.port,
             },
           ],
-          databaseId: config.valkeyDb || 0,
+          databaseId: 0,
           requestTimeout: 3000,
           advancedConfiguration: {
             connectionTimeout: 5000,
@@ -78,17 +82,17 @@ export async function createClient(): Promise<RateLimiterClient> {
     }
 
     case "valkey-io": {
-      if (config.useValkeyCluster) {
+      if (config.valkey.cluster) {
         console.log("Connecting to Valkey Cluster using iovalkey client");
 
         clientInstance = new ValkeyCluster(
-          config.valkeyClusterNodes.map((node) => ({
-            host: node.host,
-            port: node.port,
-          })),
+          config.valkey.clusterNodes?.map((node) => {
+            const [host, portStr] = node.split(":");
+            const port = parseInt(portStr, 10);
+            return { host, port };
+          }) || [],
           {
             redisOptions: {
-              db: config.valkeyDb,
               connectTimeout: 5000,
               maxRetriesPerRequest: 3,
               offlineQueue: true,
@@ -101,13 +105,12 @@ export async function createClient(): Promise<RateLimiterClient> {
         );
       } else {
         console.log(
-          `Connecting to Valkey at ${config.valkeyHost}:${config.valkeyPort} using iovalkey client`
+          `Connecting to Valkey at ${config.valkey.host}:${config.valkey.port} using iovalkey client`
         );
 
         clientInstance = new Valkey({
-          host: config.valkeyHost,
-          port: config.valkeyPort,
-          db: config.valkeyDb,
+          host: config.valkey.host,
+          port: config.valkey.port,
           connectTimeout: 5000,
           maxRetriesPerRequest: 3,
           offlineQueue: true,
@@ -117,17 +120,17 @@ export async function createClient(): Promise<RateLimiterClient> {
     }
 
     case "ioredis": {
-      if (config.useRedisCluster) {
+      if (config.redis.cluster) {
         console.log("Connecting to Redis Cluster using ioredis");
 
         clientInstance = new ioredis.Cluster(
-          config.redisClusterNodes.map((node) => ({
-            host: node.host,
-            port: node.port,
-          })),
+          config.redis.clusterNodes?.map((node) => {
+            const [host, portStr] = node.split(":");
+            const port = parseInt(portStr, 10);
+            return { host, port };
+          }) || [],
           {
             redisOptions: {
-              db: config.redisDb,
               connectTimeout: 5000,
               maxRetriesPerRequest: 3,
               offlineQueue: true,
@@ -139,13 +142,12 @@ export async function createClient(): Promise<RateLimiterClient> {
         );
       } else {
         console.log(
-          `Connecting to Redis at ${config.redisHost}:${config.redisPort} using ioredis`
+          `Connecting to Redis at ${config.redis.host}:${config.redis.port} using ioredis`
         );
 
         clientInstance = new ioredis.Redis({
-          host: config.redisHost,
-          port: config.redisPort,
-          db: config.redisDb,
+          host: config.redis.host,
+          port: config.redis.port,
           connectTimeout: 5000,
           maxRetriesPerRequest: 3,
           offlineQueue: true,
@@ -163,11 +165,11 @@ export async function createClient(): Promise<RateLimiterClient> {
       clientInstance = await GlideClient.createClient({
         addresses: [
           {
-            host: config.valkeyHost,
-            port: config.valkeyPort,
+            host: config.valkey.host,
+            port: config.valkey.port,
           },
         ],
-        databaseId: config.valkeyDb || 0,
+        databaseId: 0,
         requestTimeout: 3000,
         advancedConfiguration: {
           connectionTimeout: 5000,

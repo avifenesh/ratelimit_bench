@@ -1,17 +1,26 @@
-FROM node:22-slim
+FROM node:20-slim
 
 WORKDIR /app
 
-
+# Copy package files for better caching
 COPY package*.json ./
+RUN npm ci --quiet --no-scripts
 
-RUN npm install
+# Copy tsconfig for build
+COPY tsconfig.json ./
+COPY src/ ./src/
 
-
-COPY . .
-
-
+# Build TypeScript code
 RUN npm run build
 
+# Copy remaining files
+COPY . .
 
-CMD ["npm", "run", "loadtest"]
+# Create directory for results
+RUN mkdir -p /app/results
+
+# Set environment variables for the network configuration
+ENV DOCKER_NETWORK="ratelimit_bench_benchmark_network"
+
+# Use node command directly to avoid npm script issues
+CMD ["node", "dist/benchmark/index.js"]

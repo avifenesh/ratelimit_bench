@@ -1,19 +1,11 @@
 #!/bin/bash
 
-#
-
-# Advanced Benchmark Orchestration Script for Rate Limiter Testing (Dockerized)
-
-# This script automates testing of different rate limiter implementations
-
-# using Docker containers for the server, load tester, and database.
-
 set -e
 
 # --- Configuration ---
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR_HOST="$(pwd)/results/${TIMESTAMP}" # Absolute path for Docker volume mount
+RESULTS_DIR_HOST="$(pwd)/results/${TIMESTAMP}"
 LOG_FILE="${RESULTS_DIR_HOST}/benchmark.log"
 README_FILE="${RESULTS_DIR_HOST}/README.md"
 SERVER_IMAGE_TAG="benchmark-server:latest"
@@ -62,15 +54,57 @@ docker stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 
 }
 
-# Trap errors and ensure cleanup
+run_server_container() {
+  local rate_limiter=$1
+  local cluster_env=$2
+  
+  echo "[$(date +'%Y-%m-%d %H:%M:%S')] Starting server container (benchmark-server:latest)..."
+  
+  # Get the correct network name - this should match what docker-compose creates
+  network_name="ratelimit_bench_benchmark_network"
+  echo "[$(date +'%Y-%m-%d %H:%M:%S')] Using Docker network: $network_name"
+  
+  # Verify network exists
+  if ! docker network inspect $network_name >/dev/null 2>&1; then
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: Network $network_name does not exist!"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Available networks:"
+    docker network ls
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] An error occurred. Cleaning up..."
+    cleanup
+    exit 1
+  fi
+  
+  server_container_id=$(docker run -d \
+    --network $network_name \
+    -p 3000:3000 \
+    -e "MODE=$rate_limiter" \
+    ${cluster_env} \
+    -e "BENCHMARK=true" \
+    -e "NODE_ENV=production" \
+    benchmark-server:latest)
 
-trap 'log "An error occurred. Cleaning up..."; cleanup_containers; exit 1' ERR INT TERM
+  if [ $? -ne 0 ]; then
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] An error occurred. Cleaning up..."
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Cleaning up containers..."
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Stopping database containers defined in docker-compose.yml..."
+    docker-compose down -v
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Cleanup complete."
+    exit 1
+  fi
+  
+  echo $server_container_id
+}
 
 # --- Initialization ---
 
-log "Initializing benchmark run..."
+# Create the results directory and log file *before* any logging happens
 mkdir -p "$RESULTS_DIR_HOST"
 touch "$LOG_FILE"
+
+# Trap errors and ensure cleanup
+trap 'log "An error occurred. Cleaning up..."; cleanup_containers; exit 1' ERR INT TERM
+
+log "Initializing benchmark run..."
 
 # Create README (unchanged)
 
@@ -140,18 +174,18 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     fi
 
     # Select appropriate Docker Compose file and network name
-    network_name="benchmark_network" # Default for standalone
+    network_name="ratelimit_bench_benchmark_network" # Default for standalone
     if [[ "$use_cluster" == "true" ]]; then
         if [[ "$db_tech" == "redis" ]]; then
             CURRENT_COMPOSE_FILE="docker-compose-redis-cluster.yml"
-            network_name="ratelimit_bench_redis-cluster-network" # Default compose network name convention
+            network_name="ratelimit_bench_benchmark_network" # Use same network for all containers
         elif [[ "$db_tech" == "valkey" ]]; then
             CURRENT_COMPOSE_FILE="docker-compose-valkey-cluster.yml"
-            network_name="ratelimit_bench_valkey-cluster-network" # Default compose network name convention
+            network_name="ratelimit_bench_benchmark_network" # Use same network for all containers
         fi
     else
         CURRENT_COMPOSE_FILE="docker-compose.yml"
-        # network_name remains benchmark_network
+        # network_name remains ratelimit_bench_benchmark_network
     fi
 
     if [ ! -f "$CURRENT_COMPOSE_FILE" ]; then
@@ -298,13 +332,9 @@ log "Benchmark suite finished."
 log "Results are stored in: ${RESULTS_DIR_HOST}"
 
 # --- Generate Report (Optional) ---
-
-# if [ -f "scripts/generate-report.sh" ]; then
-
-# log "Generating report..."
-
-# ./scripts/generate-report.sh "$RESULTS_DIR_HOST"
-
-# fi
+if [ -f "scripts/generate-report.sh" ]; then
+  log "Generating report..."
+  ./scripts/generate-report.sh "$RESULTS_DIR_HOST"
+fi
 
 exit 0

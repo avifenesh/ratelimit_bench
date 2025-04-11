@@ -1,8 +1,10 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { getRateLimiter, consumePoint } from "../lib/rateLimiterFactory.js";
 import { RateLimiterRes } from "rate-limiter-flexible";
-import { rateLimitHits, rateLimitConsume } from "../routes/index.js";
-import config from "../config/index.js";
+import { rateLimitHits, rateLimitConsumptions } from "../routes/index.js";
+import { getConfig } from "../config/index.js";
+
+const config = getConfig();
 
 /**
  * Rate limiter middleware for Fastify.
@@ -26,10 +28,10 @@ export async function rateLimiter(
     await consumePoint(ip);
 
     // Increment the consume counter with current mode as label
-    rateLimitConsume.inc({ mode: config.mode });
+    rateLimitConsumptions.inc({ rate_limiter: config.mode });
   } catch (error) {
     // Rate limit hit - track this in metrics
-    rateLimitHits.inc({ mode: config.mode });
+    rateLimitHits.inc({ rate_limiter: config.mode });
 
     const rateLimiterRes = error as RateLimiterRes;
     const seconds = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;

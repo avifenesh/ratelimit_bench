@@ -20,7 +20,7 @@ build/
 .env.production
 
 # Benchmark results
-results/
+results/*
 
 # Editor directories and files
 .vscode/

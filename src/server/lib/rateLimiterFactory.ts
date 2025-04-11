@@ -10,7 +10,9 @@ import {
   RateLimiterRes,
 } from "rate-limiter-flexible";
 import { createClient, closeClient } from "./clientFactory.js";
-import config from "../config/index.js";
+import { getConfig } from "../config/index.js";
+
+const config = getConfig();
 
 let rateLimiter: RateLimiterAbstract | null = null;
 
@@ -26,9 +28,9 @@ export async function createRateLimiter(): Promise<RateLimiterAbstract> {
   const rateLimitOptions = {
     storeClient: client,
     keyPrefix: "ratelimit",
-    points: config.rateLimit,
-    duration: config.duration,
-    blockDuration: config.blockDuration,
+    points: config.rateLimiter.points,
+    duration: config.rateLimiter.duration,
+    blockDuration: config.rateLimiter.blockDuration,
   };
 
   // Select the appropriate rate limiter implementation based on mode
