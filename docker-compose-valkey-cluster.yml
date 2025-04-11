@@ -1,13 +1,13 @@
 services:
   # Valkey Cluster with 3 shards (3 primaries, 3 replicas)
   valkey-node1:
-    image: "valkey/valkey:latest"
+    image: "valkey/valkey:latest" # Using latest for cluster as per original
     command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
-      - "8081:8080"
+      - "8081:8080" # Host port 8081 -> Container port 8080
     volumes:
       - valkey-node1-data:/data
-      - ./valkey.conf:/etc/valkey/valkey.conf
+      - ./valkey.conf:/etc/valkey/valkey.conf # Assumes valkey.conf exists locally
     networks:
       - valkey-cluster-network
 
@@ -70,14 +70,14 @@ services:
   valkey-cluster-setup:
     image: "valkey/valkey:latest"
     command: >
-      bash -c "sleep 5 && 
-      echo 'yes' | valkey-cli --cluster create 
-        valkey-node1:8080 
-        valkey-node2:8080 
-        valkey-node3:8080 
-        valkey-node4:8080 
-        valkey-node5:8080 
-        valkey-node6:8080 
+      bash -c "sleep 10 &&
+      echo 'yes' | valkey-cli --cluster create
+        valkey-node1:8080
+        valkey-node2:8080
+        valkey-node3:8080
+        valkey-node4:8080
+        valkey-node5:8080
+        valkey-node6:8080
         --cluster-replicas 1"
     networks:
       - valkey-cluster-network

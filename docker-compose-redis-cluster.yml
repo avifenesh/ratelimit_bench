@@ -4,7 +4,7 @@ services:
     image: "redis:latest"
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
-      - "6371:6379"
+      - "6371:6379" # Host port 6371 -> Container port 6379
     volumes:
       - redis-node1-data:/data
     networks:
@@ -64,14 +64,14 @@ services:
   redis-cluster-setup:
     image: "redis:latest"
     command: >
-      bash -c "sleep 5 && 
-      echo 'yes' | redis-cli --cluster create 
-        redis-node1:6379 
-        redis-node2:6379 
-        redis-node3:6379 
-        redis-node4:6379 
-        redis-node5:6379 
-        redis-node6:6379 
+      bash -c "sleep 10 &&
+      echo 'yes' | redis-cli --cluster create
+        redis-node1:6379
+        redis-node2:6379
+        redis-node3:6379
+        redis-node4:6379
+        redis-node5:6379
+        redis-node6:6379
         --cluster-replicas 1"
     networks:
       - redis-cluster-network

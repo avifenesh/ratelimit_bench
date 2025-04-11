@@ -62,6 +62,6 @@ temp/
 # Test files
 test-results/
 
-# k6 output files
-summary.json
 result_*.json
+*.conf
+package-lock.json

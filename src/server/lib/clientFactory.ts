@@ -4,18 +4,16 @@
  */
 
 import * as ioredis from "ioredis";
-import * as Redis from "redis";
-import Valkey from "iovalkey";
+import { Redis as Valkey, Cluster as iovalkeyCluster } from "iovalkey";
 import { GlideClient, GlideClusterClient, Logger } from "@valkey/valkey-glide";
 import config from "../config/index.js";
 
 // Define a common client type alias
 type RateLimiterClient =
-  | Redis.Redis
-  | Redis.Cluster
-  | Redis.RedisClientType
-  | Valkey.Valkey
-  | Valkey.Cluster
+  | ioredis.Redis
+  | ioredis.Cluster
+  | Valkey
+  | iovalkeyCluster
   | GlideClient
   | GlideClusterClient;
 
@@ -83,7 +81,7 @@ export async function createClient(): Promise<RateLimiterClient> {
       if (config.useValkeyCluster) {
         console.log("Connecting to Valkey Cluster using iovalkey client");
 
-        clientInstance = new Valkey.Cluster(
+        clientInstance = new iovalkeyCluster(
           config.valkeyClusterNodes.map((node) => ({
             host: node.host,
             port: node.port,
@@ -93,7 +91,7 @@ export async function createClient(): Promise<RateLimiterClient> {
               db: config.valkeyDb,
               connectTimeout: 5000,
               maxRetriesPerRequest: 3,
-              enableOfflineQueue: true,
+              offlineQueue: true,
             },
             // Slightly better defaults for Valkey IO
             scaleReads: "all",
@@ -112,7 +110,7 @@ export async function createClient(): Promise<RateLimiterClient> {
           db: config.valkeyDb,
           connectTimeout: 5000,
           maxRetriesPerRequest: 3,
-          enableOfflineQueue: true,
+          offlineQueue: true,
         });
       }
       break;
@@ -122,7 +120,7 @@ export async function createClient(): Promise<RateLimiterClient> {
       if (config.useRedisCluster) {
         console.log("Connecting to Redis Cluster using ioredis");
 
-        clientInstance = new Redis.Cluster(
+        clientInstance = new ioredis.Cluster(
           config.redisClusterNodes.map((node) => ({
             host: node.host,
             port: node.port,
@@ -132,7 +130,7 @@ export async function createClient(): Promise<RateLimiterClient> {
               db: config.redisDb,
               connectTimeout: 5000,
               maxRetriesPerRequest: 3,
-              enableOfflineQueue: true,
+              offlineQueue: true,
             },
             scaleReads: "slave",
             maxRedirections: 16,
@@ -144,43 +142,14 @@ export async function createClient(): Promise<RateLimiterClient> {
           `Connecting to Redis at ${config.redisHost}:${config.redisPort} using ioredis`
         );
 
-        clientInstance = new Redis({
+        clientInstance = new ioredis.Redis({
           host: config.redisHost,
           port: config.redisPort,
           db: config.redisDb,
           connectTimeout: 5000,
           maxRetriesPerRequest: 3,
-          enableOfflineQueue: true,
+          offlineQueue: true,
         });
-      }
-      break;
-    }
-
-    case "redis-node": {
-      if (config.useRedisCluster) {
-        console.log(
-          "Redis Node client does not support cluster mode in rate-limiter-flexible"
-        );
-        throw new Error(
-          "Cluster mode not supported with redis-node client in rate-limiter-flexible"
-        );
-      } else {
-        console.log(
-          `Connecting to Redis at ${config.redisHost}:${config.redisPort} using node-redis`
-        );
-
-        const url = `redis://${config.redisHost}:${config.redisPort}/${
-          config.redisDb || 0
-        }`;
-
-        clientInstance = Redis.createClient({
-          url,
-          socket: {
-            connectTimeout: 5000,
-          },
-        });
-
-        await clientInstance.connect();
       }
       break;
     }
@@ -229,19 +198,14 @@ export async function closeClient(): Promise<void> {
       clientInstance instanceof GlideClient ||
       clientInstance instanceof GlideClusterClient
     ) {
-      await clientInstance.disconnect();
+      clientInstance.close();
     } else if (
-      clientInstance instanceof Redis ||
-      clientInstance instanceof Redis.Cluster ||
-      clientInstance instanceof Valkey.Valkey ||
-      clientInstance instanceof Valkey.Cluster
+      clientInstance instanceof ioredis.Redis ||
+      clientInstance instanceof ioredis.Cluster ||
+      clientInstance instanceof Valkey ||
+      clientInstance instanceof iovalkeyCluster
     ) {
-      await clientInstance.quit();
-    } else if (config.mode === "redis-node" && clientInstance.quit) {
-      // For node-redis client
-      await clientInstance.quit();
-    } else if (typeof clientInstance.disconnect === "function") {
-      await clientInstance.disconnect();
+      clientInstance.disconnect();
     }
   } catch (err) {
     console.error("Error closing client:", err);

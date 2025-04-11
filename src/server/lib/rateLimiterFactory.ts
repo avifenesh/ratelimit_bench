@@ -4,7 +4,7 @@
  */
 import {
   RateLimiterRedis,
-  RateLimiterCluster,
+  RateLimiterValkey,
   RateLimiterValkeyGlide,
   RateLimiterAbstract,
   RateLimiterRes,
@@ -39,18 +39,11 @@ export async function createRateLimiter(): Promise<RateLimiterAbstract> {
       break;
 
     case "valkey-io":
-    case "redis-ioredis":
-      if (config.useValkeyCluster || config.useRedisCluster) {
-        console.log("Using RateLimiterCluster");
-        rateLimiter = new RateLimiterCluster(rateLimitOptions);
-      } else {
-        console.log("Using RateLimiterRedis");
-        rateLimiter = new RateLimiterRedis(rateLimitOptions);
-      }
+      console.log("Using RateLimiterValkey");
+      rateLimiter = new RateLimiterValkey(rateLimitOptions);
       break;
-
-    case "redis-node":
-      console.log("Using RateLimiterRedis with Node Redis client");
+    case "redis-ioredis":
+      console.log("Using RateLimiterRedis");
       rateLimiter = new RateLimiterRedis(rateLimitOptions);
       break;
     default:
