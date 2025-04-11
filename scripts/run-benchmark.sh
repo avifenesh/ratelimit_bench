@@ -17,13 +17,10 @@ README_FILE="${RESULTS_DIR}/README.md"
 DEFAULT_DURATION=30
 DEFAULT_CONCURRENCY_LEVELS=(10 50 100 500 1000)
 DEFAULT_REQUEST_TYPES=("light" "heavy")
-# Rate limiter types with Valkey implementations first (per project priority)
 DEFAULT_RATE_LIMITER_TYPES=(
-    # Standalone configurations
   "valkey-glide"
   "valkey-io"
   "ioredis"
-    # Cluster configurations
     "valkey-glide:cluster"
     "valkey-io:cluster"
     "ioredis:cluster"
@@ -144,9 +141,9 @@ start_server() {
     export VALKEY_HOST=localhost
     export VALKEY_PORT=6380 # Default Valkey port from root docker-compose.yml
 
-    # Start the server using ts-node
+    # Start the server using locally installed ts-node
     log "Starting Node.js server process..."
-    ts-node src/server/index.ts > "$log_file" 2>&1 &
+    npx ts-node src/server/index.ts > "$log_file" 2>&1 &
     SERVER_PID=$!
 
     log "Server process started with PID $SERVER_PID"

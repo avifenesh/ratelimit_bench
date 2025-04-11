@@ -1,13 +1,12 @@
 services:
-  # Valkey Cluster with 3 shards (3 primaries, 3 replicas)
   valkey-node1:
-    image: "valkey/valkey:latest" # Using latest for cluster as per original
+    image: "valkey/valkey:latest"
     command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
-      - "8081:8080" # Host port 8081 -> Container port 8080
+      - "8081:8080"
     volumes:
       - valkey-node1-data:/data
-      - ./valkey.conf:/etc/valkey/valkey.conf # Assumes valkey.conf exists locally
+      - ./valkey.conf:/etc/valkey/valkey.conf
     networks:
       - valkey-cluster-network
 

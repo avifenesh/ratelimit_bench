@@ -21,10 +21,10 @@ services:
       - benchmark_network
 
   valkey:
-    image: valkey/valkey:8.1 # Using specific version for standalone
+    image: valkey/valkey:8.1
     container_name: benchmark-valkey
     ports:
-      - "8080:6379" # Mapping host 8080 to container 6379
+      - "8080:6379"
     command: valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
     ulimits:
       nproc: 65535
@@ -53,11 +53,11 @@ services:
       - redis
 
   valkey-exporter:
-    image: oliver006/redis_exporter:latest # Can use redis_exporter for Valkey
+    image: oliver006/redis_exporter:latest
     container_name: valkey-exporter
     ports:
       - "9122:9121"
-    command: --redis.addr=redis://valkey:6379 # Connects to Valkey service on its internal port 6379
+    command: --redis.addr=redis://valkey:6379
     networks:
       - benchmark_network
     depends_on:
