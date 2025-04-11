@@ -1,18 +1,47 @@
-# Node.js dependencies
+# Dependencies
 node_modules/
-package-lock.json
 npm-debug.log
+yarn-debug.log
+yarn-error.log
+.pnpm-debug.log
+
+# Build output
+dist/
+build/
+
+# TypeScript incremental compilation cache
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Benchmark results
+results/
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Docker volumes
+docker-volumes/
+
+# Log files
+*.log
+
+.github/
+
 # Database files
 dump.rdb
 nodes.conf
 *.aof
 appendonly.aof
-
-# Benchmark results
-results/
-bench/results/
-*.log
-benchmark.log
 
 # Docker & monitoring artifacts
 docker-compose.override.yml
@@ -29,8 +58,6 @@ temp/
 .tmp/
 *.tmp
 
-# Editor and OS files
-.vscode/
 
 # Test files
 test-results/

@@ -1,0 +1,22 @@
+# Server Dockerfile
+# Used for running the API server with rate limiting
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy source files
+COPY . .
+
+# Transpile TypeScript to JavaScript
+RUN npm run build
+
+# Expose the server port
+EXPOSE 3000
+
+# Start the server
+CMD ["npm", "start"]
