@@ -52,10 +52,7 @@ export async function createClient(): Promise<RateLimiterClient> {
           useTLS: false,
           requestTimeout: 3000,
           advancedConfiguration: {
-            connectionTimeout: 5000,
-          },
-          periodicChecks: {
-            duration_in_sec: 30,
+            connectionTimeout: 1000,
           },
         });
       } else {
@@ -71,10 +68,9 @@ export async function createClient(): Promise<RateLimiterClient> {
               port: config.valkey.port,
             },
           ],
-          databaseId: 0,
           requestTimeout: 3000,
           advancedConfiguration: {
-            connectionTimeout: 5000,
+            connectionTimeout: 1000,
           },
         });
       }
@@ -97,10 +93,6 @@ export async function createClient(): Promise<RateLimiterClient> {
               maxRetriesPerRequest: 3,
               offlineQueue: true,
             },
-            // Slightly better defaults for Valkey IO
-            scaleReads: "all",
-            maxRedirections: 16,
-            retryDelayOnFailover: 100,
           }
         );
       } else {
@@ -131,13 +123,10 @@ export async function createClient(): Promise<RateLimiterClient> {
           }) || [],
           {
             redisOptions: {
-              connectTimeout: 5000,
+              connectTimeout: 1000,
               maxRetriesPerRequest: 3,
               offlineQueue: true,
             },
-            scaleReads: "slave",
-            maxRedirections: 16,
-            retryDelayOnFailover: 150,
           }
         );
       } else {
@@ -201,7 +190,7 @@ export async function closeClient(): Promise<void> {
       clientInstance instanceof GlideClusterClient
     ) {
       // For Valkey Glide clients, use close() method
-      await clientInstance.close();
+      clientInstance.close();
     } else if (
       clientInstance instanceof ioredis.Redis ||
       clientInstance instanceof ioredis.Cluster ||
