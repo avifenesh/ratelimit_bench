@@ -52,7 +52,7 @@ const routes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
   // Define routes
   fastify.get("/", async (_request: FastifyRequest, _reply: FastifyReply) => {
-    return "Hello, world!"; // In Fastify, you can simply return the value
+    return "Hello, world!";
   });
 
   // Health check endpoint for monitoring and benchmark scripts

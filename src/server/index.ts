@@ -5,10 +5,8 @@ import {
   closeRateLimiter,
 } from "./lib/rateLimiterFactory.js";
 import config from "./config/index.js";
-// Add Node.js types
 import * as process from "process";
 
-// Create a fastify server
 const createServer = () => {
   const server = fastify({
     logger: {
@@ -19,15 +17,12 @@ const createServer = () => {
     },
   });
 
-  // Register routes
   server.register(routes);
 
   return server;
 };
 
-// Start the server
 const start = async () => {
-  // Initialize rate limiter
   await createRateLimiter();
 
   const server = createServer();
