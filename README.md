@@ -13,9 +13,8 @@ The benchmarks compare the following implementations, ordered by their strategic
 1. **Valkey Glide** - Modern TypeScript-native Valkey client (primary focus)
 2. **Valkey IO** - Valkey client based on ioredis API (secondary focus)
 3. **Redis IORedis** - Popular Redis client for Node.js
-4. **Redis Node** - Official Node.js Redis client
 
-Each implementation is tested in both standalone and cluster modes (where supported).
+Each implementation is tested in both standalone and cluster modes.
 
 ## Getting Started
 

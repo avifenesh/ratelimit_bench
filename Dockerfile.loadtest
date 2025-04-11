@@ -1,6 +1,3 @@
-# Loadtest Dockerfile
-# Used for running load tests against the rate limiting server
-
 FROM node:22-slim
 
 WORKDIR /app

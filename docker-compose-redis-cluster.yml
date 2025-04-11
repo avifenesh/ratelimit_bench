@@ -1,10 +1,9 @@
 services:
-  # Redis Cluster with 3 shards (3 primaries, 3 replicas)
   redis-node1:
     image: "redis:latest"
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
-      - "6371:6379" # Host port 6371 -> Container port 6379
+      - "6371:6379"
     volumes:
       - redis-node1-data:/data
     networks:
@@ -42,7 +41,7 @@ services:
 
   redis-node5:
     image: "redis:latest"
-    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes # Added command
     ports:
       - "6375:6379"
     volumes:
@@ -52,7 +51,7 @@ services:
 
   redis-node6:
     image: "redis:latest"
-    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes # Added command
     ports:
       - "6376:6379"
     volumes:
@@ -62,17 +61,19 @@ services:
 
   # Redis cluster setup
   redis-cluster-setup:
-    image: "redis:latest"
+    image: redis:latest
     command: >
-      bash -c "sleep 10 &&
-      echo 'yes' | redis-cli --cluster create
-        redis-node1:6379
-        redis-node2:6379
-        redis-node3:6379
-        redis-node4:6379
-        redis-node5:6379
-        redis-node6:6379
-        --cluster-replicas 1"
+      bash -c "
+        sleep 10 &&
+        echo 'yes' | redis-cli --cluster create \
+          redis-node1:6379 \
+          redis-node2:6379 \
+          redis-node3:6379 \
+          redis-node4:6379 \
+          redis-node5:6379 \
+          redis-node6:6379 \
+          --cluster-replicas 1
+      "
     networks:
       - redis-cluster-network
     depends_on:
@@ -85,7 +86,6 @@ services:
 
 networks:
   redis-cluster-network:
-    driver: bridge
 
 volumes:
   redis-node1-data:
