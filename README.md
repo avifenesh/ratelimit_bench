@@ -4,60 +4,59 @@ A comprehensive benchmark suite for comparing Valkey and Redis performance with 
 
 ## Project Overview
 
-This project provides a benchmark framework for testing different rate limiter implementations using Valkey and Redis with the rate-limiter-flexible library. The application is fully implemented in TypeScript with Fastify for improved developer experience, type safety, and performance.
+This project benchmarks rate limiting performance using Valkey and Redis with the rate-limiter-flexible package. The main goal is to compare different rate limiter implementations in a fair but strategic manner – with a focus on highlighting Valkey and Valkey Glide's performance advantages.
 
-## Supported Implementations
+## Architecture
 
-The benchmarks compare the following implementations, ordered by their strategic importance:
-
-1. **Valkey Glide** - Modern TypeScript-native Valkey client (primary focus)
-2. **Valkey IO** - Valkey client based on ioredis API (secondary focus)
-3. **Redis IORedis** - Popular Redis client for Node.js
-
-Each implementation is tested in both standalone and cluster modes.
+- **Server**: Fastify-based API server with rate limiting middleware  
+  • Main server (`src/server/index.ts`)  
+  • API routes including Prometheus metrics at `/metrics` (`src/server/routes/index.ts`)
+- **Rate Limiters**: Using rate-limiter-flexible with various backends:
+  - **Valkey Glide** – Modern TypeScript-native client using static instantiation (`GlideClient.createClient()` / `GlideClusterClient.createClient()`)
+  - **Valkey IO** – Client based on the ioredis API, enhanced for performance using valkey.
+  - **Redis IORedis** – Popular Redis client for Node.js
+- **Benchmark Layer**:  
+  • Autocannon loads tests with resource monitoring (`src/benchmark/autocannon.ts`)  
+  • Results collection and processing (`src/benchmark/results.ts`)  
+  • CPU/memory resource tracking (`src/benchmark/monitor.ts`)
+- **Infrastructure**:  
+  • Docker containers for both standalone and cluster configurations  
+  • Environment variables (`USE_REDIS_CLUSTER` and `USE_VALKEY_CLUSTER`) controlling cluster mode
+- **Monitoring**:  
+  • Prometheus metrics endpoint integrated on `/metrics`  
+  • Grafana dashboards for visualizations
 
 ## Getting Started
 
-### Prerequisites
+1. Install dependencies:
 
-- Node.js 18+ and npm
-- Docker and Docker Compose
-- TypeScript
+   ```bash
+   npm install
+   ```
 
-### Installation
+2. Set the environment variables as needed (e.g. `USE_VALKEY_CLUSTER=true` for cluster mode).
+3. Start the server:
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/ratelimit_bench.git
-cd ratelimit_bench
+   ```bash
+   npm start
+   ```
 
-# Install dependencies
-npm install
-```
+4. Run benchmarks:
+   - Use `scripts/run-benchmark.sh` for a single benchmark run.
+   - Run `scripts/run-all.sh` to execute all tests and generate reports.
+5. Generate the report visualizations:
 
-### Running Benchmarks
+   ```bash
+   scripts/generate-report.sh
+   ```
 
-The project includes comprehensive benchmark scripts that test all configurations:
+6. For troubleshooting Docker network issues, use:
 
-```bash
-# Run standard benchmarks with default settings
-npm run benchmark
+   ```bash
+   scripts/fix-network.sh
+   ```
 
-# Run a specific benchmark scenario
-npm run benchmark:light  # Light workload tests
-npm run benchmark:heavy  # Heavy workload tests
-
-# Run all benchmarks (includes both short and long duration tests)
-npm run benchmark:all
-
-# Run the full benchmark suite with monitoring and comprehensive reports
-npm run benchmark:full
-
-# Run custom benchmark (duration in seconds)
-./scripts/run-benchmark.sh 60  # Run with 60 second duration
-```
-
-### Custom Benchmark Configurations
+## Benchmark Options
 
 You can customize the benchmark parameters:
 
@@ -73,17 +72,24 @@ Parameters:
 - `request-types`: Space-separated list of request types (default: "light heavy")
 - `rate-limiter-types`: Space-separated list of implementations to test (default: "valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster")
 
-### Network Troubleshooting
+## Client Implementations & Performance
 
-If you encounter network issues with Docker containers, you can use the network troubleshooting script:
+The benchmark tests the following clients (in priority order):
 
-```bash
-npm run fix-network
-```
+1. **Valkey Glide**  
+   - Uses `GlideClient.createClient()` and `GlideClusterClient.createClient()`
+   - Optimized for production-level performance  
+   - Special configuration (e.g. `Logger.init('off')`, optimized connection pooling)
 
-This will run a diagnostic test to ensure proper container communication and network configuration.
+2. **Valkey IO**
 
-### Running Individual Services
+3. **Redis IORedis**
+
+All rate limit settings are kept consistent across implementations for fair performance comparisons, and benchmark visualizations always present Valkey implementations first.
+
+## Individual Services
+
+Start specific services:
 
 ```bash
 # Start just the databases
@@ -99,7 +105,6 @@ npm run docker:redis-cluster:up
 npm run start:valkey-glide
 npm run start:iovalkey
 npm run start:ioredis
-npm run start:redis-node
 npm run start:valkey-cluster
 npm run start:redis-cluster
 ```
