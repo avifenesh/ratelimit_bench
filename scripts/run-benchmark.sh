@@ -13,6 +13,9 @@ LOADTEST_IMAGE_TAG="benchmark-loadtest:latest"
 SERVER_CONTAINER_NAME="running-benchmark-server"
 LOADTEST_CONTAINER_NAME="running-benchmark-loadtest"
 DEFAULT_SERVER_PORT=3000
+WARMUP_DURATION=10 # Define warmup duration
+COOLDOWN_BETWEEN_TESTS=5 # Define cooldown between individual tests
+COOLDOWN_BETWEEN_TYPES=10 # Define cooldown between rate limiter types
 
 # Check if containers are already running (set by run-all.sh)
 SKIP_CONTAINER_SETUP=${CONTAINERS_ALREADY_RUNNING:-false}
@@ -296,46 +299,32 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     # --- Start Database (only if not using pre-existing containers) ---
     if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
-        log "Starting database container(s) using $CURRENT_COMPOSE_FILE..."
+        log "Starting database container(s) using $CURRENT_COMPOSE_FILE (standalone mode)..."
 
-        # Add network configuration to docker-compose command
-        export COMPOSE_PROJECT_NAME="ratelimit_bench"
-        export BENCHMARK_NETWORK_NAME="$BENCHMARK_NETWORK"
-        
-        # Add extra network config if it doesn't exist in compose files
-        if ! grep -q "$BENCHMARK_NETWORK" "$CURRENT_COMPOSE_FILE"; then
-            log "Adding $BENCHMARK_NETWORK to database containers..."
-            # Use -p to set project name explicitly which affects network naming
-            docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
-            
-            # Connect services to our benchmark network if needed
-            if [[ "$use_cluster" == "true" ]]; then
-                if [[ "$db_tech" == "redis" ]]; then
-                    for i in {1..6}; do
-                        docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-node$i-1" 2>/dev/null || true
-                    done
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-cluster-setup-1" 2>/dev/null || true
-                elif [[ "$db_tech" == "valkey" ]]; then
-                    for i in {1..6}; do
-                        docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-node$i-1" 2>/dev/null || true
-                    done
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-cluster-setup-1" 2>/dev/null || true
-                fi
-            else
-                # Connect standalone containers
-                if [[ "$db_tech" == "redis" ]]; then
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-1" 2>/dev/null || true
-                elif [[ "$db_tech" == "valkey" ]]; then
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-1" 2>/dev/null || true
-                fi
-            fi
+        # Use a unique project name for standalone runs to avoid conflicts
+        STANDALONE_PROJECT_NAME="ratelimit_bench_standalone_${TIMESTAMP}"
+        export COMPOSE_PROJECT_NAME="$STANDALONE_PROJECT_NAME"
+        export BENCHMARK_NETWORK_NAME="$BENCHMARK_NETWORK" # Still use the same network
+
+        log "Using project name: $STANDALONE_PROJECT_NAME"
+
+        # Remove --remove-orphans to prevent accidental removal of run-all.sh containers
+        # Use --force-recreate to ensure fresh containers for the standalone test
+        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "$STANDALONE_PROJECT_NAME" up -d --force-recreate
+
+        # Explicitly connect the standalone containers to the benchmark network
+        # Need to get the actual container names *after* they are started
+        get_actual_container_names "$db_tech" # Re-detect names after compose up
+
+        if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+             log "Connecting $ACTUAL_DB_CONTAINER to network $BENCHMARK_NETWORK..."
+             docker network connect "$BENCHMARK_NETWORK" "$ACTUAL_DB_CONTAINER" 2>/dev/null || true
         else
-            # Compose file already has network configuration
-            docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
+             log "WARNING: Could not detect standalone container name after compose up to connect to network."
         fi
-        
+
         log "Waiting for database container(s) to be ready..."
-        
+
         # More robust health checks for database containers
         if [[ "$use_cluster" == "true" ]]; then
             log "Waiting for cluster initialization (30s)..."
@@ -343,32 +332,56 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         else
             max_db_wait=30
             db_ready=false
-            db_container=""
-            
+            db_container="" # This variable seems unused now, consider removing
+
             if [[ "$db_tech" == "redis" ]]; then
-                db_container="redis"
+                # db_container="redis" # Unused
                 db_port=6379
             elif [[ "$db_tech" == "valkey" ]]; then
-                db_container="valkey"
+                # db_container="valkey" # Unused
                 db_port=6379
             fi
-            
-            log "Checking if $db_container is ready..."
+
+            log "Checking database readiness..." # Simplified log message
             for ((i=1; i<=max_db_wait; i++)); do
-                if docker exec ratelimit_bench-$db_container-1 redis-cli -p $db_port PING 2>/dev/null | grep -q "PONG"; then
-                    log "Database container $db_container is ready!"
-                    db_ready=true
-                    break
+                # Use the *detected* container name for the check
+                if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+                    # log "Checking readiness of detected container: $ACTUAL_DB_CONTAINER" # Redundant log
+                    if docker exec "$ACTUAL_DB_CONTAINER" redis-cli -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                        log "Database container $ACTUAL_DB_CONTAINER is ready!"
+                        db_ready=true
+                        break
+                    fi
+                else
+                    log "WARNING: Cannot check readiness, container name not detected yet. Retrying detection..."
+                    # Optionally break or wait longer if name detection is delayed
+                    sleep 2 # Wait a bit longer if name wasn't detected immediately
+                    get_actual_container_names "$db_tech" # Try detecting again
+                    # If still not detected after retry, continue loop without check
+                    if [[ -z "$ACTUAL_DB_CONTAINER" ]]; then
+                       log "Still cannot detect container name."
+                       sleep 1 # Wait before next loop iteration
+                       continue
+                    fi
+                    # If detected now, proceed to check in the next iteration or immediately? Let's check now.
+                    if docker exec "$ACTUAL_DB_CONTAINER" redis-cli -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                        log "Database container $ACTUAL_DB_CONTAINER is ready!"
+                        db_ready=true
+                        break
+                    fi
                 fi
-                log "Waiting for database to be ready... attempt ($i/$max_db_wait)"
+
+                log "Waiting for database ($ACTUAL_DB_CONTAINER) to be ready... attempt ($i/$max_db_wait)"
                 sleep 1
             done
-            
+
             if [ "$db_ready" = false ]; then
-                log "WARNING: Database may not be fully ready, but continuing..."
+                log "WARNING: Database ($ACTUAL_DB_CONTAINER) may not be fully ready after $max_db_wait attempts, but continuing..."
                 log "Database container status:"
-                docker ps | grep $db_container || true
-                docker logs ratelimit_bench-$db_container-1 | tail -20
+                docker ps | grep "$ACTUAL_DB_CONTAINER" || true
+                if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+                    docker logs "$ACTUAL_DB_CONTAINER" | tail -20
+                fi
             fi
         fi
     else
@@ -628,7 +641,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     # Cooldown period between rate limiter types
     if [[ "$rate_limiter_type" != "${rate_limiter_types[-1]}" ]]; then
         log "Cooldown period (${COOLDOWN_BETWEEN_TYPES}s) before next rate limiter type..."
-        sleep "$COOLDOWN_BETWEEN_TYPES"
+        sleep "$COOLDOWN_BETWEEN_TYPES" # Now this variable is defined
     fi
 
 done # End of the main loop iterating through rate_limiter_types
