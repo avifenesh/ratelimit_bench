@@ -1,6 +1,7 @@
 services:
   redis-node1:
     image: "redis:latest"
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node1
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6371:6379"
@@ -8,9 +9,11 @@ services:
       - redis-node1-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
   redis-node2:
     image: "redis:latest"
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node2
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6372:6379"
@@ -18,9 +21,11 @@ services:
       - redis-node2-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
   redis-node3:
     image: "redis:latest"
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6373:6379"
@@ -28,9 +33,11 @@ services:
       - redis-node3-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
   redis-node4:
     image: "redis:latest"
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node4
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6374:6379"
@@ -38,44 +45,55 @@ services:
       - redis-node4-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
   redis-node5:
     image: "redis:latest"
-    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes # Added command
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node5
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6375:6379"
     volumes:
       - redis-node5-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
   redis-node6:
     image: "redis:latest"
-    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes # Added command
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node6
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6376:6379"
     volumes:
       - redis-node6-data:/data
     networks:
       - redis-cluster-network
+      - benchmark-network
 
-  # Redis cluster setup
   redis-cluster-setup:
     image: redis:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-cluster-setup
     command: >
-      bash -c "
-        sleep 10 &&
-        echo 'yes' | redis-cli --cluster create \
-          redis-node1:6379 \
-          redis-node2:6379 \
-          redis-node3:6379 \
-          redis-node4:6379 \
-          redis-node5:6379 \
-          redis-node6:6379 \
-          --cluster-replicas 1
-      "
+      bash -c '
+        echo "Waiting for nodes to be ready..."
+        for i in 1 2 3 4 5 6; do
+          until redis-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node$$i -p 6379 PING; do
+            echo "Waiting for ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node$$i..."
+            sleep 1
+          done
+        done
+        echo "All nodes are ready. Creating cluster..."
+        echo yes | redis-cli --cluster create ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node1:6379 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node2:6379 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node3:6379 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node4:6379 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node5:6379 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node6:6379 --cluster-replicas 1
+        
+        echo "Cluster setup complete. Checking cluster info..."
+        sleep 5
+        redis-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node1 -p 6379 CLUSTER INFO
+        redis-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node1 -p 6379 CLUSTER NODES
+      '
     networks:
       - redis-cluster-network
+      - benchmark-network
     depends_on:
       - redis-node1
       - redis-node2
@@ -87,6 +105,8 @@ services:
 networks:
   redis-cluster-network:
     driver: bridge
+  benchmark-network:
+    external: true
 
 volumes:
   redis-node1-data:
