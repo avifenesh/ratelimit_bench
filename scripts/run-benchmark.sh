@@ -13,6 +13,7 @@ LOADTEST_IMAGE_TAG="benchmark-loadtest:latest"
 SERVER_CONTAINER_NAME="running-benchmark-server"
 LOADTEST_CONTAINER_NAME="running-benchmark-loadtest"
 DEFAULT_SERVER_PORT=3000
+BENCHMARK_NETWORK="benchmark-network"
 
 # Default configurations (unchanged)
 
@@ -37,11 +38,22 @@ log() {
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+ensure_network() {
+    log "Ensuring Docker network '$BENCHMARK_NETWORK' exists..."
+    if ! docker network inspect "$BENCHMARK_NETWORK" >/dev/null 2>&1; then
+        log "Creating Docker network '$BENCHMARK_NETWORK'..."
+        docker network create "$BENCHMARK_NETWORK"
+    else
+        log "Network '$BENCHMARK_NETWORK' already exists."
+    fi
+}
+
 cleanup_containers() {
-log "Cleaning up containers..." # Stop and remove server and loadtest containers if they exist
-docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    log "Cleaning up containers..."
+    # Stop and remove server and loadtest containers if they exist
+    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
     docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
-docker stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    docker stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
     docker rm "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 
     # Stop and remove database containers using compose
@@ -57,42 +69,38 @@ docker stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 run_server_container() {
   local rate_limiter=$1
   local cluster_env=$2
+  local network_name=$3
   
-  echo "[$(date +'%Y-%m-%d %H:%M:%S')] Starting server container (benchmark-server:latest)..."
-  
-  # Get the correct network name - this should match what docker-compose creates
-  network_name="ratelimit_bench_benchmark_network"
-  echo "[$(date +'%Y-%m-%d %H:%M:%S')] Using Docker network: $network_name"
+  log "Starting server container ($SERVER_IMAGE_TAG)..."
+  log "Using Docker network: $network_name"
   
   # Verify network exists
-  if ! docker network inspect $network_name >/dev/null 2>&1; then
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: Network $network_name does not exist!"
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Available networks:"
+  if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+    log "ERROR: Network $network_name does not exist!"
+    log "Available networks:"
     docker network ls
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] An error occurred. Cleaning up..."
-    cleanup
+    log "An error occurred. Cleaning up..."
+    cleanup_containers
     exit 1
   fi
   
   server_container_id=$(docker run -d \
-    --network $network_name \
-    -p 3000:3000 \
+    --name "$SERVER_CONTAINER_NAME" \
+    --network "$network_name" \
+    -p "$DEFAULT_SERVER_PORT:$DEFAULT_SERVER_PORT" \
     -e "MODE=$rate_limiter" \
     ${cluster_env} \
     -e "BENCHMARK=true" \
     -e "NODE_ENV=production" \
-    benchmark-server:latest)
+    "$SERVER_IMAGE_TAG")
 
   if [ $? -ne 0 ]; then
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] An error occurred. Cleaning up..."
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Cleaning up containers..."
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Stopping database containers defined in docker-compose.yml..."
-    docker-compose down -v
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] Cleanup complete."
+    log "An error occurred starting server container. Cleaning up..."
+    cleanup_containers
     exit 1
   fi
   
-  echo $server_container_id
+  echo "$server_container_id"
 }
 
 # --- Initialization ---
@@ -106,7 +114,7 @@ trap 'log "An error occurred. Cleaning up..."; cleanup_containers; exit 1' ERR I
 
 log "Initializing benchmark run..."
 
-# Create README (unchanged)
+# Create README with testing methodology details
 
 cat > "$README_FILE" << EOF
 
@@ -116,6 +124,8 @@ cat > "$README_FILE" << EOF
 
 - **Date:** $(date)
 - **Duration:** ${duration}s per test
+- **Warmup Period:** 10s per test (not included in results)
+- **Cooldown Period:** 5s between tests, 10s between rate limiter types
 - **Concurrency Levels:** ${concurrency_levels[@]}
 - **Request Types:** ${request_types[@]}
 - **Rate Limiter Types:** ${rate_limiter_types[@]}
@@ -130,6 +140,15 @@ cat > "$README_FILE" << EOF
 - **Kernel:** $(uname -r)
 - **Docker Version:** $(docker --version)
 
+## Testing Methodology
+
+Each benchmark test follows this procedure:
+1. Start the server with the selected rate limiter implementation
+2. Run a 10-second warmup phase to stabilize the system (results discarded)
+3. Run the actual benchmark for the configured duration
+4. Allow a 5-second cooldown period between different test configurations
+5. Allow a 10-second cooldown period between different rate limiter types
+
 ## Results Summary
 
 (Results will be summarized here after all tests complete)
@@ -138,6 +157,8 @@ EOF
 
 log "Starting benchmark suite with:"
 log "- Duration: ${duration}s per test"
+log "- Warmup Period: 10s per test"
+log "- Cooldown Periods: 5s between tests, 10s between rate limiter types"
 log "- Concurrency levels: ${concurrency_levels[*]}"
 log "- Request types: ${request_types[*]}"
 log "- Rate limiter types: ${rate_limiter_types[*]}"
@@ -153,6 +174,10 @@ docker build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
 # --- Main Test Loop ---
 
 CURRENT_COMPOSE_FILE="" # Track the currently active compose file
+
+# Create network upfront
+log "Creating Docker network for benchmarks..."
+docker network create "$BENCHMARK_NETWORK" 2>/dev/null || log "Network $BENCHMARK_NETWORK already exists"
 
 for rate_limiter_type in "${rate_limiter_types[@]}"; do
 log "=== Testing rate limiter: $rate_limiter_type ==="
@@ -173,19 +198,15 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         use_cluster="true"
     fi
 
-    # Select appropriate Docker Compose file and network name
-    network_name="ratelimit_bench_benchmark_network" # Default for standalone
+    # Select appropriate Docker Compose file
     if [[ "$use_cluster" == "true" ]]; then
         if [[ "$db_tech" == "redis" ]]; then
             CURRENT_COMPOSE_FILE="docker-compose-redis-cluster.yml"
-            network_name="ratelimit_bench_benchmark_network" # Use same network for all containers
         elif [[ "$db_tech" == "valkey" ]]; then
             CURRENT_COMPOSE_FILE="docker-compose-valkey-cluster.yml"
-            network_name="ratelimit_bench_benchmark_network" # Use same network for all containers
         fi
     else
         CURRENT_COMPOSE_FILE="docker-compose.yml"
-        # network_name remains ratelimit_bench_benchmark_network
     fi
 
     if [ ! -f "$CURRENT_COMPOSE_FILE" ]; then
@@ -195,18 +216,53 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     # --- Start Database ---
     log "Starting database container(s) using $CURRENT_COMPOSE_FILE..."
-    docker-compose -f "$CURRENT_COMPOSE_FILE" up -d --remove-orphans --force-recreate
+
+    # Add network configuration to docker-compose command
+    export COMPOSE_PROJECT_NAME="ratelimit_bench"
+    export BENCHMARK_NETWORK_NAME="$BENCHMARK_NETWORK"
+    
+    # Add extra network config if it doesn't exist in compose files
+    if ! grep -q "$BENCHMARK_NETWORK" "$CURRENT_COMPOSE_FILE"; then
+        log "Adding $BENCHMARK_NETWORK to database containers..."
+        # Use -p to set project name explicitly which affects network naming
+        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
+        
+        # Connect services to our benchmark network if needed
+        if [[ "$use_cluster" == "true" ]]; then
+            if [[ "$db_tech" == "redis" ]]; then
+                for i in {1..6}; do
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-node$i-1" 2>/dev/null || true
+                done
+                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-cluster-setup-1" 2>/dev/null || true
+            elif [[ "$db_tech" == "valkey" ]]; then
+                for i in {1..6}; do
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-node$i-1" 2>/dev/null || true
+                done
+                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-cluster-setup-1" 2>/dev/null || true
+            fi
+        else
+            # Connect standalone containers
+            if [[ "$db_tech" == "redis" ]]; then
+                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-1" 2>/dev/null || true
+            elif [[ "$db_tech" == "valkey" ]]; then
+                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-1" 2>/dev/null || true
+            fi
+        fi
+    else
+        # Compose file already has network configuration
+        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
+    fi
+    
     log "Waiting for database container(s) to be ready..."
     # Simple sleep for now, replace with more robust health checks if needed
     sleep 15
 
     # --- Configure Server Environment ---
-    server_env_vars=(
-        -e "NODE_ENV=production"
-        -e "PORT=${DEFAULT_SERVER_PORT}"
-        -e "MODE=${rate_limiter_type}" # Pass the full mode like 'valkey-glide:cluster'
-        -e "LOG_LEVEL=info"
-    )
+    server_env_vars=()
+    server_env_vars+=(-e "NODE_ENV=production")
+    server_env_vars+=(-e "PORT=${DEFAULT_SERVER_PORT}")
+    server_env_vars+=(-e "MODE=${rate_limiter_type}") # Pass the full mode like 'valkey-glide:cluster'
+    server_env_vars+=(-e "LOG_LEVEL=info")
 
     # Set DB connection details based on mode
     if [[ "$use_cluster" == "true" ]]; then
@@ -215,7 +271,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
             # Inside docker network, use service names and default ports
             server_env_vars+=(-e "REDIS_CLUSTER_NODES=redis-node1:6379,redis-node2:6379,redis-node3:6379,redis-node4:6379,redis-node5:6379,redis-node6:6379")
         elif [[ "$db_tech" == "valkey" ]]; then
-             # Inside docker network, use service names and default ports (8080 as defined in valkey compose)
+             # Inside docker network, use service names and default ports
             server_env_vars+=(-e "VALKEY_CLUSTER_NODES=valkey-node1:8080,valkey-node2:8080,valkey-node3:8080,valkey-node4:8080,valkey-node5:8080,valkey-node6:8080")
         fi
     else
@@ -227,7 +283,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     # --- Start Server Container ---
     log "Starting server container ($SERVER_IMAGE_TAG)..."
     docker run -d --name "$SERVER_CONTAINER_NAME" \
-        --network="$network_name" \
+        --network="$BENCHMARK_NETWORK" \
         -p "${DEFAULT_SERVER_PORT}:${DEFAULT_SERVER_PORT}" \
         "${server_env_vars[@]}" \
         "$SERVER_IMAGE_TAG"
@@ -277,10 +333,36 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 -e "RATE_LIMITER_TYPE=${rate_limiter_type}" # Pass for context if needed by loadtest script
             )
 
-            # Run Loadtest Container
+            # First run a warm-up phase
+            log "Starting warmup phase (10s) for test: $test_id..."
+            warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup"
+            
+            # Configure with shorter duration for warmup
+            warmup_env_vars=("${loadtest_env_vars[@]}")
+            # Replace DURATION with 10s for warmup
+            for i in "${!warmup_env_vars[@]}"; do
+                if [[ ${warmup_env_vars[$i]} == -e\ DURATION* ]]; then
+                    warmup_env_vars[$i]="-e DURATION=10"
+                    break
+                fi
+            done
+            # Add flag to indicate this is warmup (can be used by loadtest script if needed)
+            warmup_env_vars+=(-e "WARMUP=true")
+            
+            # Run warmup loadtest
+            docker run --name "$warmup_container_name" \
+                --network="$BENCHMARK_NETWORK" \
+                "${warmup_env_vars[@]}" \
+                "$LOADTEST_IMAGE_TAG" > /dev/null 2>&1 || true
+                
+            # Clean up warmup container regardless of result
+            docker rm "$warmup_container_name" > /dev/null 2>&1 || true
+            log "Warmup phase completed. Starting actual benchmark..."
+            
+            # Run the actual Loadtest Container
             log "Starting loadtest container ($LOADTEST_IMAGE_TAG)..."
             docker run --name "$LOADTEST_CONTAINER_NAME" \
-                --network="$network_name" \
+                --network="$BENCHMARK_NETWORK" \
                 -v "${RESULTS_DIR_HOST}:/app/results" \
                 "${loadtest_env_vars[@]}" \
                 "$LOADTEST_IMAGE_TAG" # Assumes CMD in Dockerfile.loadtest runs the benchmark
