@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Copy package files for better caching
 COPY package*.json ./
-RUN npm ci --quiet --no-scripts
+RUN npm install --quiet --no-scripts
 
 # Copy tsconfig for build
 COPY tsconfig.json ./
