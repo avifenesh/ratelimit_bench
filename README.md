@@ -37,15 +37,21 @@ npm install
 
 ### Running Benchmarks
 
-The project includes a comprehensive benchmark script that tests all configurations:
+The project includes comprehensive benchmark scripts that test all configurations:
 
 ```bash
-# Run all benchmarks with default settings
+# Run standard benchmarks with default settings
 npm run benchmark
 
 # Run a specific benchmark scenario
 npm run benchmark:light  # Light workload tests
 npm run benchmark:heavy  # Heavy workload tests
+
+# Run all benchmarks (includes both short and long duration tests)
+npm run benchmark:all
+
+# Run the full benchmark suite with monitoring and comprehensive reports
+npm run benchmark:full
 
 # Run custom benchmark (duration in seconds)
 ./scripts/run-benchmark.sh 60  # Run with 60 second duration
@@ -65,7 +71,17 @@ Parameters:
 - `duration`: Test duration in seconds (default: 30)
 - `concurrency-levels`: Space-separated list of concurrency levels (default: "10 50 100 500 1000")
 - `request-types`: Space-separated list of request types (default: "light heavy")
-- `rate-limiter-types`: Space-separated list of implementations to test (default: all implementations)
+- `rate-limiter-types`: Space-separated list of implementations to test (default: "valkey-glide valkey-io ioredis valkey-glide:cluster valkey-io:cluster ioredis:cluster")
+
+### Network Troubleshooting
+
+If you encounter network issues with Docker containers, you can use the network troubleshooting script:
+
+```bash
+npm run fix-network
+```
+
+This will run a diagnostic test to ensure proper container communication and network configuration.
 
 ### Running Individual Services
 

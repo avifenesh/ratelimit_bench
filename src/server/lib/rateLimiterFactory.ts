@@ -27,7 +27,6 @@ export async function createRateLimiter(): Promise<RateLimiterAbstract> {
   const client = await createClient();
   const rateLimitOptions = {
     storeClient: client,
-    keyPrefix: "ratelimit",
     points: config.rateLimiter.points,
     duration: config.rateLimiter.duration,
     blockDuration: config.rateLimiter.blockDuration,

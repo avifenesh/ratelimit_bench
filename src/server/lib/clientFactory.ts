@@ -48,12 +48,7 @@ export async function createClient(): Promise<RateLimiterClient> {
               const port = parseInt(portStr, 10);
               return { host, port };
             }) || [],
-          // Optimized settings for Valkey Cluster
           useTLS: false,
-          requestTimeout: 3000,
-          advancedConfiguration: {
-            connectionTimeout: 1000,
-          },
         });
       } else {
         console.log(
@@ -68,10 +63,7 @@ export async function createClient(): Promise<RateLimiterClient> {
               port: config.valkey.port,
             },
           ],
-          requestTimeout: 3000,
-          advancedConfiguration: {
-            connectionTimeout: 1000,
-          },
+          useTLS: false,
         });
       }
       break;
@@ -86,14 +78,7 @@ export async function createClient(): Promise<RateLimiterClient> {
             const [host, portStr] = node.split(":");
             const port = parseInt(portStr, 10);
             return { host, port };
-          }) || [],
-          {
-            redisOptions: {
-              connectTimeout: 5000,
-              maxRetriesPerRequest: 3,
-              offlineQueue: true,
-            },
-          }
+          }) || []
         );
       } else {
         console.log(
@@ -103,9 +88,6 @@ export async function createClient(): Promise<RateLimiterClient> {
         clientInstance = new Valkey({
           host: config.valkey.host,
           port: config.valkey.port,
-          connectTimeout: 5000,
-          maxRetriesPerRequest: 3,
-          offlineQueue: true,
         });
       }
       break;
@@ -120,14 +102,7 @@ export async function createClient(): Promise<RateLimiterClient> {
             const [host, portStr] = node.split(":");
             const port = parseInt(portStr, 10);
             return { host, port };
-          }) || [],
-          {
-            redisOptions: {
-              connectTimeout: 1000,
-              maxRetriesPerRequest: 3,
-              offlineQueue: true,
-            },
-          }
+          }) || []
         );
       } else {
         console.log(
@@ -137,9 +112,6 @@ export async function createClient(): Promise<RateLimiterClient> {
         clientInstance = new ioredis.Redis({
           host: config.redis.host,
           port: config.redis.port,
-          connectTimeout: 5000,
-          maxRetriesPerRequest: 3,
-          offlineQueue: true,
         });
       }
       break;
@@ -158,11 +130,8 @@ export async function createClient(): Promise<RateLimiterClient> {
             port: config.valkey.port,
           },
         ],
-        databaseId: 0,
-        requestTimeout: 3000,
-        advancedConfiguration: {
-          connectionTimeout: 5000,
-        },
+        requestTimeout: 1000,
+        useTLS: false,
       });
       Logger.init("off");
     }
