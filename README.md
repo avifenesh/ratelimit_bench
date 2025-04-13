@@ -1,10 +1,10 @@
 # Rate Limiter Benchmark
 
-A comprehensive benchmark suite for comparing Valkey and Redis performance with rate-limiter-flexible.
+A comprehensive benchmark suite for comparing Valkey and Redis performance with [rate-limiter-flexible](https://github.com/animir/node-rate-limiter-flexible).
 
 ## Project Overview
 
-This project benchmarks rate limiting performance using Valkey and Redis with the rate-limiter-flexible package. The main goal is to compare different rate limiter implementations in a fair but strategic manner – with a focus on highlighting Valkey and Valkey Glide's performance advantages.
+This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible). The main goal is to compare different rate limiter implementations in a fair manner – but with a focus on highlighting Valkey and [Valkey Glide's](<https://github.com/valkey-io/valkey-glide>) performance advantages.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ This project benchmarks rate limiting performance using Valkey and Redis with th
   • Main server (`src/server/index.ts`)  
   • API routes including Prometheus metrics at `/metrics` (`src/server/routes/index.ts`)
 - **Rate Limiters**: Using rate-limiter-flexible with various backends:
-  - **Valkey Glide** – Modern TypeScript-native client for Valkey, optimized for performance
+  - **Valkey Glide** – Modern TypeScript-native client for Valkey, built with main focus on stability, reliability, performance, and scalability. Glide was designed with years of experience with users pains, with other clients, with the goal to bring fault tolerance and user experience to the next level.
   - **IOValkey** – Client based on the ioredis API, enhanced for performance using valkey.
   - **Redis IORedis** – Popular Redis client for Node.js
 - **Benchmark Layer**:  
@@ -35,22 +35,17 @@ This project benchmarks rate limiting performance using Valkey and Redis with th
    ```
 
 2. Set the environment variables as needed (e.g. `USE_VALKEY_CLUSTER=true` for cluster mode).
-3. Start the server:
 
-   ```bash
-   npm start
-   ```
-
-4. Run benchmarks:
+3. Run benchmarks:
    - Use `scripts/run-benchmark.sh` for a single benchmark run.
    - Run `scripts/run-all.sh` to execute all tests and generate reports.
-5. Generate the report visualizations:
+4. Generate the report visualizations:
 
    ```bash
    scripts/generate-report.sh
    ```
 
-6. For troubleshooting Docker network issues, use:
+5. For troubleshooting Docker network issues, use:
 
    ```bash
    scripts/fix-network.sh

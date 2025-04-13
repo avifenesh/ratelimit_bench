@@ -50,7 +50,7 @@ for result_file in $RESULT_FILES; do
   if [ -f "$result_file" ]; then
     req_per_sec=$(jq -r '.requests.average // 0' "$result_file")
     latency_avg=$(jq -r '.latency.average // 0' "$result_file")
-    latency_p95=$(jq -r '.latency.p95 // 0' "$result_file")
+    latency_p97_5=$(jq -r '.latency."p97.5" // 0' "$result_file")
     latency_p99=$(jq -r '.latency.p99 // 0' "$result_file")
     rate_limit_hits=$(jq -r '.rateLimitHits // 0' "$result_file")
     cpu_usage=$(jq -r '.resources.cpu.average // 0' "$result_file")
@@ -58,7 +58,7 @@ for result_file in $RESULT_FILES; do
     duration=$(jq -r '.duration // 30' "$result_file")
     
     # Add to summary CSV
-    echo "$priority,$implementation,$mode,$req_type,$concurrency,$duration,$req_per_sec,$latency_avg,$latency_p95,$latency_p99,$rate_limit_hits,$cpu_usage,$memory_usage" >> "$SUMMARY_CSV.tmp"
+    echo "$priority,$implementation,$mode,$req_type,$concurrency,$duration,$req_per_sec,$latency_avg,$latency_p97_5,$latency_p99,$rate_limit_hits,$cpu_usage,$memory_usage" >> "$SUMMARY_CSV.tmp"
   fi
 done
 
@@ -93,8 +93,7 @@ cat > "${REPORT_DIR}/index.html" << EOF
   
   <div class="highlight">
     <h3>Key Findings</h3>
-    <p>This report highlights the performance characteristics of different rate limiter implementations,
-       with a focus on Valkey's performance advantages.</p>
+    <p>This report highlights the performance characteristics of different rate limiter implementations.</p>
   </div>
   
   <h2>Throughput Comparison (Requests per Second)</h2>

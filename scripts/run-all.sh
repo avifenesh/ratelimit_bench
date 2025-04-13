@@ -7,10 +7,33 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_BASE_DIR="$(pwd)/results"
 RESULTS_DIR="${RESULTS_BASE_DIR}/${TIMESTAMP}"
 
+# Debug: Print directory and log file paths
+echo "RESULTS_DIR: ${RESULTS_DIR}"
+
 # Create directory structure before any logging happens
 mkdir -p "$RESULTS_DIR"
+MKDIR_EXIT_CODE=$?
+echo "mkdir exit code: ${MKDIR_EXIT_CODE}"
+if [ "$MKDIR_EXIT_CODE" -ne 0 ]; then
+  echo "Error creating directory: $RESULTS_DIR"
+  exit 1
+fi
+
 LOG_FILE="${RESULTS_DIR}/full_benchmark.log"
+echo "LOG_FILE: ${LOG_FILE}"
 touch "$LOG_FILE"
+TOUCH_EXIT_CODE=$?
+if [ "$TOUCH_EXIT_CODE" -ne 0 ]; then
+    echo "Error: Failed to create log file '$LOG_FILE' with touch. Exit code: $TOUCH_EXIT_CODE" >&2
+    # Add a check to see if the directory exists at this point
+    if [ ! -d "$RESULTS_DIR" ]; then
+        echo "Error: Directory '$RESULTS_DIR' does not exist when trying to touch the log file." >&2
+    else
+        echo "Error: Directory '$RESULTS_DIR' exists, but touch failed (Permissions issue?)" >&2
+    fi
+    exit 1 # Exit explicitly if touch fails
+fi
+
 
 # --- Helper Functions ---
 log() {
