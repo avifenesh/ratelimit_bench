@@ -210,9 +210,8 @@ cat > "${REPORT_DIR}/index.html" << EOF
     function getColor(index, alpha) {
       const colors = [
         \`rgba(66, 133, 244, \${alpha})\`,  // Blue (Valkey Glide)
-        \`rgba(15, 157, 88, \${alpha})\`,   // Green (Valkey IO)
+        \`rgba(15, 157, 88, \${alpha})\`,   // Green (IOValkey)
         \`rgba(244, 180, 0, \${alpha})\`,   // Yellow (Redis IORedis)
-        \`rgba(219, 68, 55, \${alpha})\`,   // Red (Redis Node)
         \`rgba(138, 78, 255, \${alpha})\`,  // Purple
         \`rgba(66, 133, 244, \${alpha})\`,  // Blue
       ];

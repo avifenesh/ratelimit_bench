@@ -12,8 +12,8 @@ This project benchmarks rate limiting performance using Valkey and Redis with th
   • Main server (`src/server/index.ts`)  
   • API routes including Prometheus metrics at `/metrics` (`src/server/routes/index.ts`)
 - **Rate Limiters**: Using rate-limiter-flexible with various backends:
-  - **Valkey Glide** – Modern TypeScript-native client using static instantiation (`GlideClient.createClient()` / `GlideClusterClient.createClient()`)
-  - **Valkey IO** – Client based on the ioredis API, enhanced for performance using valkey.
+  - **Valkey Glide** – Modern TypeScript-native client for Valkey, optimized for performance
+  - **IOValkey** – Client based on the ioredis API, enhanced for performance using valkey.
   - **Redis IORedis** – Popular Redis client for Node.js
 - **Benchmark Layer**:  
   • Autocannon loads tests with resource monitoring (`src/benchmark/autocannon.ts`)  
@@ -77,11 +77,8 @@ Parameters:
 The benchmark tests the following clients (in priority order):
 
 1. **Valkey Glide**  
-   - Uses `GlideClient.createClient()` and `GlideClusterClient.createClient()`
-   - Optimized for production-level performance  
-   - Special configuration (e.g. `Logger.init('off')`, optimized connection pooling)
 
-2. **Valkey IO**
+2. **IOValkey**
 
 3. **Redis IORedis**
 

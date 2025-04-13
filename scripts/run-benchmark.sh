@@ -397,39 +397,68 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         fi
     fi
 
-    # --- Configure Server Environment ---
+    # --- Configure Server Environment Variables ---
     server_env_vars=()
     server_env_vars+=(-e "NODE_ENV=production")
     server_env_vars+=(-e "PORT=${DEFAULT_SERVER_PORT}")
 
-    if [[ "$actual_rate_limiter_type" == "iovalkey" ]]; then
+    # Special handling for different client types
+    case "$actual_rate_limiter_type" in
+      "iovalkey")
         server_env_vars+=(-e "MODE=iovalkey")
-        server_env_vars+=(-e "IOVALKEY_HOST=benchmark-valkey")
-        server_env_vars+=(-e "IOVALKEY_PORT=6379")
-        server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey") 
-        server_env_vars+=(-e "VALKEY_PORT=6379")
-        log "Setting IOVALKEY mode with host/port: benchmark-valkey:6379"
-    else
-        # For other clients, use the standard mode
-        server_env_vars+=(-e "MODE=${actual_rate_limiter_type}")
-    fi
-
-    server_env_vars+=(-e "LOG_LEVEL=info")
-
-    if [[ "$db_tech" == "valkey" ]]; then
-        if [[ "$actual_rate_limiter_type" == "valkey-glide" ]]; then
-            server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey")
-            server_env_vars+=(-e "VALKEY_PORT=6379") 
-            log "VALKEY_HOST=benchmark-valkey, VALKEY_PORT=6379 (for valkey-glide)"
-        elif [[ "$actual_rate_limiter_type" == "iovalkey" ]]; then
-            server_env_vars+=(-e "IOVALKEY_HOST=benchmark-valkey")
-            server_env_vars+=(-e "IOVALKEY_PORT=6379")
-            server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey") 
-            server_env_vars+=(-e "VALKEY_PORT=6379")
-            log "IOVALKEY_HOST=benchmark-valkey, IOVALKEY_PORT=6379 (for iovalkey)"
-        fi
+        log "Setting MODE=iovalkey explicitly"
         
-        server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
+        if [[ "$use_cluster" == "true" ]]; then
+          server_env_vars+=(-e "USE_VALKEY_CLUSTER=true")
+          server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
+          log "Setting cluster configuration for iovalkey client"
+        else
+          server_env_vars+=(-e "USE_VALKEY_CLUSTER=false")
+          server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey")
+          server_env_vars+=(-e "VALKEY_PORT=6379")
+          log "Setting standalone configuration for iovalkey client"
+        fi
+        ;;
+        
+      "valkey-glide")
+        server_env_vars+=(-e "MODE=valkey-glide")
+        
+        if [[ "$use_cluster" == "true" ]]; then
+          server_env_vars+=(-e "USE_VALKEY_CLUSTER=true")
+          server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
+        else
+          server_env_vars+=(-e "USE_VALKEY_CLUSTER=false")
+          server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey")
+          server_env_vars+=(-e "VALKEY_PORT=6379")
+        fi
+        ;;
+        
+      "ioredis")
+        server_env_vars+=(-e "MODE=ioredis")
+        
+        if [[ "$use_cluster" == "true" ]]; then
+          server_env_vars+=(-e "USE_REDIS_CLUSTER=true")
+          server_env_vars+=(-e "REDIS_CLUSTER_NODES=${REDIS_CLUSTER_NODES}")
+        else
+          server_env_vars+=(-e "USE_REDIS_CLUSTER=false")
+          server_env_vars+=(-e "REDIS_HOST=benchmark-redis")
+          server_env_vars+=(-e "REDIS_PORT=6379")
+        fi
+        ;;
+        
+      *)
+        server_env_vars+=(-e "MODE=valkey-glide")
+        log "Unknown rate limiter type: $actual_rate_limiter_type, defaulting to valkey-glide"
+        
+        server_env_vars+=(-e "USE_VALKEY_CLUSTER=false")
+        server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey")
+        server_env_vars+=(-e "VALKEY_PORT=6379")
+        ;;
+    esac
+
+    # Add Debug logging only when needed
+    if [[ "$DEBUG_MODE" == "true" ]]; then
+      server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
     fi
 
     log "Configuring server environment variables for $rate_limiter_type..."
