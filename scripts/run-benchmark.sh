@@ -254,8 +254,44 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     fi
     
     log "Waiting for database container(s) to be ready..."
-    # Simple sleep for now, replace with more robust health checks if needed
-    sleep 15
+    
+    # More robust health checks for database containers
+    if [[ "$use_cluster" == "true" ]]; then
+        # For cluster, just wait longer since health check is more complex
+        log "Waiting for cluster initialization (30s)..."
+        sleep 30
+    else
+        # For standalone, verify the database is responding
+        max_db_wait=30
+        db_ready=false
+        db_container=""
+        
+        if [[ "$db_tech" == "redis" ]]; then
+            db_container="redis"
+            db_port=6379
+        elif [[ "$db_tech" == "valkey" ]]; then
+            db_container="valkey"
+            db_port=6379
+        fi
+        
+        log "Checking if $db_container is ready..."
+        for ((i=1; i<=max_db_wait; i++)); do
+            if docker exec ratelimit_bench-$db_container-1 redis-cli -p $db_port PING 2>/dev/null | grep -q "PONG"; then
+                log "Database container $db_container is ready!"
+                db_ready=true
+                break
+            fi
+            log "Waiting for database to be ready... attempt ($i/$max_db_wait)"
+            sleep 1
+        done
+        
+        if [ "$db_ready" = false ]; then
+            log "WARNING: Database may not be fully ready, but continuing..."
+            log "Database container status:"
+            docker ps | grep $db_container || true
+            docker logs ratelimit_bench-$db_container-1 | tail -20
+        fi
+    fi
 
     # --- Configure Server Environment ---
     server_env_vars=()
@@ -268,17 +304,23 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     if [[ "$use_cluster" == "true" ]]; then
         server_env_vars+=(-e "USE_${db_tech^^}_CLUSTER=true") # USE_VALKEY_CLUSTER=true or USE_REDIS_CLUSTER=true
         if [[ "$db_tech" == "redis" ]]; then
-            # Inside docker network, use service names and default ports
-            server_env_vars+=(-e "REDIS_CLUSTER_NODES=redis-node1:6379,redis-node2:6379,redis-node3:6379,redis-node4:6379,redis-node5:6379,redis-node6:6379")
+            # Use fully qualified container names in the network for cluster mode
+            server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379,ratelimit_bench-redis-node4-1:6379,ratelimit_bench-redis-node5-1:6379,ratelimit_bench-redis-node6-1:6379")
         elif [[ "$db_tech" == "valkey" ]]; then
-             # Inside docker network, use service names and default ports
-            server_env_vars+=(-e "VALKEY_CLUSTER_NODES=valkey-node1:8080,valkey-node2:8080,valkey-node3:8080,valkey-node4:8080,valkey-node5:8080,valkey-node6:8080")
+            # Use fully qualified container names in the network for cluster mode
+            server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:8080,ratelimit_bench-valkey-node2-1:8080,ratelimit_bench-valkey-node3-1:8080,ratelimit_bench-valkey-node4-1:8080,ratelimit_bench-valkey-node5-1:8080,ratelimit_bench-valkey-node6-1:8080")
         fi
     else
-        # Standalone: Use service names from docker-compose.yml and default ports
-        server_env_vars+=(-e "REDIS_HOST=redis" -e "REDIS_PORT=6379")
-        server_env_vars+=(-e "VALKEY_HOST=valkey" -e "VALKEY_PORT=6379") # Valkey container listens on 6379 internally
+        # Use fully qualified container names for standalone mode
+        if [[ "$db_tech" == "redis" ]]; then
+            server_env_vars+=(-e "REDIS_HOST=ratelimit_bench-redis-1" -e "REDIS_PORT=6379")
+        elif [[ "$db_tech" == "valkey" ]]; then 
+            server_env_vars+=(-e "VALKEY_HOST=ratelimit_bench-valkey-1" -e "VALKEY_PORT=6379")
+        fi
     fi
+    
+    # Add debug environment variable
+    server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
 
     # --- Start Server Container ---
     log "Starting server container ($SERVER_IMAGE_TAG)..."
@@ -290,8 +332,8 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     log "Waiting for server container to be ready..."
     # Wait for the server to log that it's listening
-    max_wait=60 # seconds
-    interval=3  # seconds
+    max_wait=120 # Increased timeout from 60 to 120 seconds
+    interval=3
     elapsed=0
     server_ready=false
     while [ $elapsed -lt $max_wait ]; do
@@ -307,8 +349,37 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     if [ "$server_ready" = false ]; then
         log "ERROR: Server container failed to start within $max_wait seconds."
-        log "Server logs:"
+        
+        # Enhanced diagnostics - inspect networking issues
+        log "Server container logs:"
         docker logs "$SERVER_CONTAINER_NAME" || true
+        
+        log "Network information:"
+        docker network inspect "$BENCHMARK_NETWORK" || true
+        
+        log "Database connection information:"
+        if [[ "$use_cluster" == "true" ]]; then
+            log "Trying to ping cluster nodes..."
+            if [[ "$db_tech" == "redis" ]]; then
+                for i in {1..6}; do
+                    docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-node$i-1" || true
+                done
+            elif [[ "$db_tech" == "valkey" ]]; then
+                for i in {1..6}; do
+                    docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-node$i-1" || true
+                done
+            fi
+        else
+            # For standalone
+            if [[ "$db_tech" == "redis" ]]; then
+                log "Trying to ping Redis container..."
+                docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-1" || true
+            elif [[ "$db_tech" == "valkey" ]]; then
+                log "Trying to ping Valkey container..."
+                docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-1" || true
+            fi
+        fi
+        
         cleanup_containers
         exit 1
     fi

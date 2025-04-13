@@ -46,7 +46,7 @@ export function registerRoutes(app: FastifyInstance, options: RouteOptions) {
   const scenario = config.scenario || "light";
 
   // Prometheus metrics endpoint
-  app.get("/metrics", async (request, reply) => {
+  app.get("/metrics", async (_request, reply) => {
     reply.header("Content-Type", registerMetrics.contentType);
     return registerMetrics.metrics();
   });

@@ -49,7 +49,6 @@ export async function createClient(): Promise<RateLimiterClient> {
               return { host, port };
             }) || [],
           useTLS: false,
-          requestTimeout: 1000,
         });
       } else {
         console.log(
@@ -65,7 +64,6 @@ export async function createClient(): Promise<RateLimiterClient> {
             },
           ],
           useTLS: false,
-          requestTimeout: 1000,
         });
       }
       break;
