@@ -28,7 +28,7 @@ export interface Config {
 }
 
 export function getConfig(): Config {
-  // Parse rate limiter mode (valkey-glide, valkey-io, ioredis, etc.)
+  // Parse rate limiter mode (valkey-glide, iovalkey, ioredis, etc.)
   const mode = process.env.MODE || "valkey-glide";
 
   // Parse Redis cluster configuration

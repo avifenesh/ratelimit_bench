@@ -11,7 +11,7 @@
         "clean": "rimraf dist",
         "prebuild": "npm run clean",
         "start:valkey-glide": "MODE=valkey-glide node dist/server/index.js",
-        "start:valkey-io": "MODE=valkey-io node dist/server/index.js",
+        "start:iovalkey": "MODE=iovalkey node dist/server/index.js",
         "start:ioredis": "MODE=ioredis node dist/server/index.js",
         "start:valkey-cluster": "MODE=valkey-glide USE_VALKEY_CLUSTER=true node dist/server/index.js",
         "start:redis-cluster": "MODE=ioredis USE_REDIS_CLUSTER=true node dist/server/index.js",

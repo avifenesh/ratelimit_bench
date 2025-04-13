@@ -36,7 +36,7 @@ DEFAULT_REQUEST_TYPES=("light" "heavy")
 
 # Define all possible types including cluster variations explicitly
 
-DEFAULT_RATE_LIMITER_TYPES=("valkey-glide" "valkey-io" "ioredis" "valkey-glide:cluster" "valkey-io:cluster" "ioredis:cluster")
+DEFAULT_RATE_LIMITER_TYPES=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cluster" "iovalkey:cluster" "ioredis:cluster")
 
 # Parse command line arguments (unchanged)
 
@@ -126,9 +126,15 @@ verify_database_connection() {
   # Test if we can connect to the database directly
   local retries=5
   local connected=false
+  local cli_command="valkey-cli"
+  
+  # Use correct CLI tool based on database technology
+  if [[ "$db_tech" == "redis" ]]; then
+    cli_command="redis-cli"
+  fi
   
   for ((i=1; i<=$retries; i++)); do
-    if docker exec $container_name redis-cli -p $port PING 2>/dev/null | grep -q "PONG"; then
+    if docker exec $container_name $cli_command -p $port PING 2>/dev/null | grep -q "PONG"; then
       log "Successfully connected to $db_tech at $container_name:$port"
       connected=true
       break
@@ -253,7 +259,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     # Determine database type and cluster mode
     db_type=$(echo "$rate_limiter_type" | cut -d':' -f1) # e.g., valkey-glide -> valkey
-    if [[ "$db_type" == "valkey-glide" || "$db_type" == "valkey-io" ]]; then
+    if [[ "$db_type" == "valkey-glide" || "$db_type" == "iovalkey" ]]; then
         db_tech="valkey"
     elif [[ "$db_type" == "ioredis" ]]; then
         db_tech="redis"
@@ -263,8 +269,10 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     fi
 
     use_cluster="false"
+    actual_rate_limiter_type="$db_type" # Clean rate limiter type without cluster suffix
     if [[ "$rate_limiter_type" == *":cluster"* ]]; then
         use_cluster="true"
+        log "Detected cluster mode for $db_type"
     fi
 
     # Get actual running container names for connections
@@ -342,29 +350,38 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 db_port=6379
             fi
 
-            log "Checking database readiness..." # Simplified log message
+            log "Checking database readiness..." 
             for ((i=1; i<=max_db_wait; i++)); do
                 # Use the *detected* container name for the check
                 if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
-                    # log "Checking readiness of detected container: $ACTUAL_DB_CONTAINER" # Redundant log
-                    if docker exec "$ACTUAL_DB_CONTAINER" redis-cli -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                    # Determine CLI tool based on database technology
+                    cli_command="valkey-cli"
+                    if [[ "$db_tech" == "redis" ]]; then
+                        cli_command="redis-cli"
+                    fi
+                    
+                    if docker exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
                         log "Database container $ACTUAL_DB_CONTAINER is ready!"
                         db_ready=true
                         break
                     fi
                 else
                     log "WARNING: Cannot check readiness, container name not detected yet. Retrying detection..."
-                    # Optionally break or wait longer if name detection is delayed
-                    sleep 2 # Wait a bit longer if name wasn't detected immediately
-                    get_actual_container_names "$db_tech" # Try detecting again
-                    # If still not detected after retry, continue loop without check
+                    sleep 2 
+                    get_actual_container_names "$db_tech" 
                     if [[ -z "$ACTUAL_DB_CONTAINER" ]]; then
                        log "Still cannot detect container name."
-                       sleep 1 # Wait before next loop iteration
+                       sleep 1 
                        continue
                     fi
-                    # If detected now, proceed to check in the next iteration or immediately? Let's check now.
-                    if docker exec "$ACTUAL_DB_CONTAINER" redis-cli -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                    
+                    # Determine CLI tool based on database technology
+                    cli_command="valkey-cli"
+                    if [[ "$db_tech" == "redis" ]]; then
+                        cli_command="redis-cli"
+                    fi
+                    
+                    if docker exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
                         log "Database container $ACTUAL_DB_CONTAINER is ready!"
                         db_ready=true
                         break
@@ -405,7 +422,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     server_env_vars=()
     server_env_vars+=(-e "NODE_ENV=production")
     server_env_vars+=(-e "PORT=${DEFAULT_SERVER_PORT}")
-    server_env_vars+=(-e "MODE=${rate_limiter_type}")
+    server_env_vars+=(-e "MODE=${actual_rate_limiter_type}")  # Use clean mode name without cluster suffix
     server_env_vars+=(-e "LOG_LEVEL=info")
     server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
 
@@ -436,13 +453,106 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     if [[ "$use_cluster" == "true" ]]; then
         server_env_vars+=(-e "USE_${db_tech^^}_CLUSTER=true") # USE_VALKEY_CLUSTER=true or USE_REDIS_CLUSTER=true
         
-        # For cluster mode, use consistent naming:
+        # Detect actual container names for better reliability
+        # Look for cluster node containers and their network information
+        log "Detecting actual cluster node containers..."
         if [[ "$db_tech" == "redis" ]]; then
-            # Use just first 3 nodes for better reliability
-            server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379")
+            # Get actual node container names with proper network prefix
+            redis_node1=$(docker ps --format "{{.Names}}" | grep -E "redis-node1" | head -1)
+            redis_node2=$(docker ps --format "{{.Names}}" | grep -E "redis-node2" | head -1)
+            redis_node3=$(docker ps --format "{{.Names}}" | grep -E "redis-node3" | head -1)
+            
+            if [[ -n "$redis_node1" && -n "$redis_node2" && -n "$redis_node3" ]]; then
+                log "Found Redis cluster nodes: $redis_node1, $redis_node2, $redis_node3"
+                server_env_vars+=(-e "REDIS_CLUSTER_NODES=$redis_node1:6379,$redis_node2:6379,$redis_node3:6379")
+            else
+                # Fallback to default naming with multiple patterns for better compatibility
+                log "Couldn't detect actual Redis cluster node names, using default patterns"
+                server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379")
+            fi
         elif [[ "$db_tech" == "valkey" ]]; then
-            # Use just first 3 nodes for better reliability
-            server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:6379,ratelimit_bench-valkey-node2-1:6379,ratelimit_bench-valkey-node3-1:6379")
+            # Get actual node container names with proper network prefix
+            valkey_node1=$(docker ps --format "{{.Names}}" | grep -E "valkey-node1" | head -1)
+            valkey_node2=$(docker ps --format "{{.Names}}" | grep -E "valkey-node2" | head -1)
+            valkey_node3=$(docker ps --format "{{.Names}}" | grep -E "valkey-node3" | head -1)
+            
+            # Ensure all cluster nodes are connected to the benchmark network
+            log "Ensuring all Valkey cluster nodes are on the benchmark network..."
+            
+            # Connect all found nodes to benchmark network
+            if [[ -n "$valkey_node1" ]]; then
+                log "Connecting $valkey_node1 to benchmark network..."
+                docker network connect "$BENCHMARK_NETWORK" "$valkey_node1" 2>/dev/null || true
+            fi
+            if [[ -n "$valkey_node2" ]]; then
+                log "Connecting $valkey_node2 to benchmark network..."
+                docker network connect "$BENCHMARK_NETWORK" "$valkey_node2" 2>/dev/null || true
+            fi
+            if [[ -n "$valkey_node3" ]]; then
+                log "Connecting $valkey_node3 to benchmark network..."
+                docker network connect "$BENCHMARK_NETWORK" "$valkey_node3" 2>/dev/null || true
+            fi
+            
+            # Get IP addresses for more reliable connection, specifically from the benchmark network
+            # Use a more specific Docker inspect template to get the correct IP
+            valkey_node1_ip=""
+            if [[ -n "$valkey_node1" ]]; then
+                # First, try to get the IP from the benchmark network
+                valkey_node1_ip=$(docker inspect -f "{{range \$k, \$v := .NetworkSettings.Networks}}{{if eq \$k \"$BENCHMARK_NETWORK\"}}{{\$v.IPAddress}}{{end}}{{end}}" "$valkey_node1" 2>/dev/null | tr -d '\n' || echo "")
+                # If empty, try to get any network IP
+                if [[ -z "$valkey_node1_ip" ]]; then
+                    valkey_node1_ip=$(docker inspect "$valkey_node1" -f '{{range $net,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' | awk '{print $1}' || echo "")
+                fi
+                log "Node1 ($valkey_node1) IP: $valkey_node1_ip"
+            fi
+            
+            valkey_node2_ip=""
+            if [[ -n "$valkey_node2" ]]; then
+                valkey_node2_ip=$(docker inspect -f "{{range \$k, \$v := .NetworkSettings.Networks}}{{if eq \$k \"$BENCHMARK_NETWORK\"}}{{\$v.IPAddress}}{{end}}{{end}}" "$valkey_node2" 2>/dev/null | tr -d '\n' || echo "")
+                if [[ -z "$valkey_node2_ip" ]]; then
+                    valkey_node2_ip=$(docker inspect "$valkey_node2" -f '{{range $net,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' | awk '{print $1}' || echo "")
+                fi
+                log "Node2 ($valkey_node2) IP: $valkey_node2_ip"
+            fi
+            
+            valkey_node3_ip=""
+            if [[ -n "$valkey_node3" ]]; then
+                valkey_node3_ip=$(docker inspect -f "{{range \$k, \$v := .NetworkSettings.Networks}}{{if eq \$k \"$BENCHMARK_NETWORK\"}}{{\$v.IPAddress}}{{end}}{{end}}" "$valkey_node3" 2>/dev/null | tr -d '\n' || echo "")
+                if [[ -z "$valkey_node3_ip" ]]; then
+                    valkey_node3_ip=$(docker inspect "$valkey_node3" -f '{{range $net,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' | awk '{print $1}' || echo "")
+                fi
+                log "Node3 ($valkey_node3) IP: $valkey_node3_ip"
+            fi
+            
+            # Get the correct port for Valkey cluster nodes (8080 per docker-compose-valkey-cluster.yml)
+            VALKEY_CLUSTER_PORT=8080
+            
+            # If we have IP addresses, use them for more reliable connection
+            if [[ -n "$valkey_node1_ip" && -n "$valkey_node2_ip" && -n "$valkey_node3_ip" ]]; then
+                log "Using IP addresses for Valkey cluster nodes with port $VALKEY_CLUSTER_PORT: $valkey_node1_ip, $valkey_node2_ip, $valkey_node3_ip"
+                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=$valkey_node1_ip:$VALKEY_CLUSTER_PORT,$valkey_node2_ip:$VALKEY_CLUSTER_PORT,$valkey_node3_ip:$VALKEY_CLUSTER_PORT")
+                
+                # Save the IP addresses for connectivity testing
+                export VALKEY_NODE1_IP=$valkey_node1_ip
+                export VALKEY_NODE2_IP=$valkey_node2_ip
+                export VALKEY_NODE3_IP=$valkey_node3_ip
+                export VALKEY_CLUSTER_PORT=$VALKEY_CLUSTER_PORT
+            elif [[ -n "$valkey_node1" && -n "$valkey_node2" && -n "$valkey_node3" ]]; then
+                log "Found Valkey cluster nodes with port $VALKEY_CLUSTER_PORT: $valkey_node1, $valkey_node2, $valkey_node3"
+                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=$valkey_node1:$VALKEY_CLUSTER_PORT,$valkey_node2:$VALKEY_CLUSTER_PORT,$valkey_node3:$VALKEY_CLUSTER_PORT")
+            else
+                # Fallback to default naming with multiple patterns for better compatibility
+                log "Couldn't detect actual Valkey cluster node names, using default patterns with port $VALKEY_CLUSTER_PORT"
+                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:$VALKEY_CLUSTER_PORT,ratelimit_bench-valkey-node2-1:$VALKEY_CLUSTER_PORT,ratelimit_bench-valkey-node3-1:$VALKEY_CLUSTER_PORT")
+            fi
+            
+            # Additional optimized settings for Valkey Glide cluster mode
+            if [[ "$actual_rate_limiter_type" == "valkey-glide" ]]; then
+                log "Configuring optimized Valkey Glide cluster settings"
+                server_env_vars+=(-e "VALKEY_GLIDE_CLUSTER_MAX_REDIRECTIONS=16")
+                server_env_vars+=(-e "VALKEY_GLIDE_DISABLE_OFFLOAD=true")
+                server_env_vars+=(-e "VALKEY_GLIDE_DISABLE_LOGGING=true")
+            fi
         fi
     else
         # For standalone mode, use consistent naming from run-all.sh
@@ -477,6 +587,89 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     # --- Start Server Container ---
     log "Starting server container ($SERVER_IMAGE_TAG)..."
+    
+    # Validate network connectivity to cluster nodes first
+    if [[ "$use_cluster" == "true" ]]; then
+        log "Validating network connectivity to cluster nodes before starting server..."
+        if [[ "$db_tech" == "valkey" ]]; then
+            # Connect to each cluster node and check if it's reachable
+            for node_idx in {1..3}; do
+                node_var="valkey_node${node_idx}"
+                node_ip_var="VALKEY_NODE${node_idx}_IP"
+                
+                node_name="${!node_var}"
+                node_ip="${!node_ip_var}"
+                
+                if [[ -n "$node_name" ]]; then
+                    log "Testing connectivity to $node_name (IP: ${node_ip:-unknown})..."
+                    
+                    # First try using the node's IP address if available
+                    if [[ -n "$node_ip" ]]; then
+                        if docker exec "$node_name" redis-cli -h "$node_ip" -p "$VALKEY_CLUSTER_PORT" PING 2>/dev/null | grep -q "PONG"; then
+                            log "Successfully connected to $node_name via IP $node_ip:$VALKEY_CLUSTER_PORT"
+                            
+                            # Check cluster info via IP
+                            if docker exec "$node_name" redis-cli -h "$node_ip" -p "$VALKEY_CLUSTER_PORT" CLUSTER INFO 2>/dev/null | grep -q "cluster_state:ok"; then
+                                log "Cluster state is OK on $node_name (via IP $node_ip:$VALKEY_CLUSTER_PORT)"
+                            else
+                                log "WARNING: Cluster may not be fully initialized on $node_name (via IP $node_ip:$VALKEY_CLUSTER_PORT)"
+                            fi
+                            continue
+                        else
+                            log "WARNING: Could not connect to $node_name via IP $node_ip:$VALKEY_CLUSTER_PORT, trying direct container access..."
+                        fi
+                    fi
+                    
+                    # Try direct container access using the correct port
+                    if docker exec "$node_name" redis-cli -p "$VALKEY_CLUSTER_PORT" PING 2>/dev/null | grep -q "PONG"; then
+                        log "Successfully connected to $node_name via direct container access on port $VALKEY_CLUSTER_PORT"
+                        
+                        # Check cluster info
+                        cluster_state=$(docker exec "$node_name" redis-cli -p "$VALKEY_CLUSTER_PORT" CLUSTER INFO 2>/dev/null)
+                        if echo "$cluster_state" | grep -q "cluster_state:ok"; then
+                            log "Cluster state is OK on $node_name"
+                        else
+                            log "WARNING: Cluster may not be fully initialized on $node_name"
+                            docker exec "$node_name" redis-cli -p "$VALKEY_CLUSTER_PORT" CLUSTER INFO 2>/dev/null || true
+                        fi
+                    else
+                        log "WARNING: Could not connect to $node_name on port $VALKEY_CLUSTER_PORT, cluster may not be fully formed yet"
+                    fi
+                fi
+            done
+            
+            # Extra validation: check if nodes can see each other
+            log "Validating inter-node connectivity..."
+            if [[ -n "$valkey_node1" && -n "$VALKEY_NODE2_IP" ]]; then
+                if docker exec "$valkey_node1" redis-cli -h "$VALKEY_NODE2_IP" -p 6379 PING 2>/dev/null | grep -q "PONG"; then
+                    log "Node $valkey_node1 can successfully reach $valkey_node2 via IP $VALKEY_NODE2_IP"
+                else
+                    log "WARNING: Node $valkey_node1 cannot reach $valkey_node2, which may cause cluster issues"
+                fi
+            fi
+        elif [[ "$db_tech" == "redis" ]]; then
+            # Similar approach for Redis cluster nodes
+            for node in $redis_node1 $redis_node2 $redis_node3; do
+                if [[ -n "$node" ]]; then
+                    log "Testing connectivity to $node..."
+                    if docker exec "$node" redis-cli PING 2>/dev/null | grep -q "PONG"; then
+                        log "Successfully connected to $node"
+                        
+                        # Check cluster info
+                        cluster_state=$(docker exec "$node" redis-cli CLUSTER INFO 2>/dev/null)
+                        if echo "$cluster_state" | grep -q "cluster_state:ok"; then
+                            log "Cluster state is OK on $node"
+                        else
+                            log "WARNING: Cluster may not be fully initialized on $node"
+                        fi
+                    else
+                        log "WARNING: Could not connect to $node, cluster may not be fully formed yet"
+                    fi
+                fi
+            done
+        fi
+    fi
+    
     docker run -d --name "$SERVER_CONTAINER_NAME" \
         --network="$BENCHMARK_NETWORK" \
         -p "${DEFAULT_SERVER_PORT}:${DEFAULT_SERVER_PORT}" \

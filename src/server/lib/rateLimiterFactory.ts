@@ -39,7 +39,7 @@ export async function createRateLimiter(): Promise<RateLimiterAbstract> {
       rateLimiter = new RateLimiterValkeyGlide(rateLimitOptions);
       break;
 
-    case "valkey-io":
+    case "iovalkey":
       console.log("Using RateLimiterValkey");
       rateLimiter = new RateLimiterValkey(rateLimitOptions);
       break;

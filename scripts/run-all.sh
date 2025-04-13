@@ -150,7 +150,7 @@ run_benchmarks() {
   # Define common parameters
   CONCURRENCY_LEVELS="10 50 100 500 1000"
   REQUEST_TYPES="light heavy"
-  RATE_LIMITER_TYPES="valkey-glide valkey-io ioredis valkey-glide:cluster valkey-io:cluster ioredis:cluster"
+  RATE_LIMITER_TYPES="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
   
   # Set environment variables to tell run-benchmark.sh that containers are already running
   export CONTAINERS_ALREADY_RUNNING="true"

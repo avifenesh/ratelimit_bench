@@ -1,98 +1,8 @@
-services:
-  valkey-node1:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
-    ports:
-      - "8081:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node1-data:/data
-    networks:
-      - valkey-cluster-network
-
-  valkey-node2:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
-    ports:
-      - "8082:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node2-data:/data
-    networks:
-      - valkey-cluster-network
-
-  valkey-node3:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
-    ports:
-      - "8083:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node3-data:/data
-    networks:
-      - valkey-cluster-network
-
-  valkey-node4:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
-    ports:
-      - "8084:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node4-data:/data
-    networks:
-      - valkey-cluster-network
-
-  valkey-node5:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes nd
-    ports:
-      - "8085:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node5-data:/data
-    networks:
-      - valkey-cluster-network
-
-  valkey-node6:
-    image: "valkey/valkey:latest"
-    command: valkey-server /etc/valkey/valkey.conf --port 8080 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
-    ports:
-      - "8086:8080"
-    volumes:
-      - ./valkey.conf:/etc/valkey/valkey.conf
-      - valkey-node6-data:/data
-    networks:
-      - valkey-cluster-network
-
-  # Valkey cluster setup
-  valkey-cluster-setup:
-    image: valkey/valkey:latest
-    command: >
-      bash -c "
-        sleep 10 &&
-        echo 'yes' | valkey-cli --cluster create \
-          valkey-node1:8080 \
-          valkey-node2:8080 \
-          valkey-node3:8080 \
-          valkey-node4:8080 \
-          valkey-node5:8080 \
-          valkey-node6:8080 \
-          --cluster-replicas 1
-      "
-    networks:
-      - valkey-cluster-network
-    depends_on:
-      - valkey-node1
-      - valkey-node2
-      - valkey-node3
-      - valkey-node4
-      - valkey-node5
-      - valkey-node6
-
 networks:
   valkey-cluster-network:
     driver: bridge
+  benchmark-network:
+    external: true
 
 volumes:
   valkey-node1-data:
@@ -101,3 +11,154 @@ volumes:
   valkey-node4-data:
   valkey-node5-data:
   valkey-node6-data:
+
+services:
+  valkey-node1:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node1-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-node2:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node2
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node2-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8082:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-node3:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node3
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node3-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8083:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-node4:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node4
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node4-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8084:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-node5:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node5
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node5-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8085:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-node6:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node6
+    command: >
+      valkey-server --cluster-enabled yes --cluster-config-file nodes.conf 
+      --cluster-node-timeout 5000 --appendonly yes --port 8080
+    volumes:
+      - valkey-node6-data:/data
+    networks:
+      - valkey-cluster-network
+    ports:
+      - "8086:8080"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-p", "8080", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  valkey-cluster-setup:
+    image: valkey/valkey:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-cluster-setup
+    depends_on:
+      valkey-node1:
+        condition: service_healthy
+      valkey-node2:
+        condition: service_healthy
+      valkey-node3:
+        condition: service_healthy
+      valkey-node4:
+        condition: service_healthy
+      valkey-node5:
+        condition: service_healthy
+      valkey-node6:
+        condition: service_healthy
+    networks:
+      - valkey-cluster-network
+    command: >
+      /bin/bash -c "
+        echo 'Waiting for nodes to be ready...'
+        for i in {1..6}; do
+          until valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node$$i -p 8080 PING; do
+            sleep 1
+          done
+        done
+        echo 'All nodes are ready. Creating cluster...'
+        echo yes | valkey-cli --cluster create \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1:8080 \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node2:8080 \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node3:8080 \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node4:8080 \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node5:8080 \
+          ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node6:8080 \
+          --cluster-replicas 1
+        
+        echo 'Cluster setup complete. Checking cluster info...'
+        sleep 5
+        valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER INFO
+        valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER NODES
+      "

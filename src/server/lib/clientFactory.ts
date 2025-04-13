@@ -69,7 +69,7 @@ export async function createClient(): Promise<RateLimiterClient> {
       break;
     }
 
-    case "valkey-io": {
+    case "iovalkey": {
       if (config.valkey.cluster) {
         console.log("Connecting to Valkey Cluster using iovalkey client");
 

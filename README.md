@@ -71,7 +71,7 @@ Parameters:
 - `duration`: Test duration in seconds (default: 30)
 - `concurrency-levels`: Space-separated list of concurrency levels (default: "10 50 100 500 1000")
 - `request-types`: Space-separated list of request types (default: "light heavy")
-- `rate-limiter-types`: Space-separated list of implementations to test (default: "valkey-glide valkey-io ioredis valkey-glide:cluster valkey-io:cluster ioredis:cluster")
+- `rate-limiter-types`: Space-separated list of implementations to test (default: "valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster")
 
 ### Network Troubleshooting
 
@@ -97,7 +97,7 @@ npm run docker:redis-cluster:up
 
 # Run the server with specific configuration
 npm run start:valkey-glide
-npm run start:valkey-io
+npm run start:iovalkey
 npm run start:ioredis
 npm run start:redis-node
 npm run start:valkey-cluster
