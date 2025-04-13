@@ -13,7 +13,17 @@ LOADTEST_IMAGE_TAG="benchmark-loadtest:latest"
 SERVER_CONTAINER_NAME="running-benchmark-server"
 LOADTEST_CONTAINER_NAME="running-benchmark-loadtest"
 DEFAULT_SERVER_PORT=3000
-BENCHMARK_NETWORK="benchmark-network"
+
+# Check if containers are already running (set by run-all.sh)
+SKIP_CONTAINER_SETUP=${CONTAINERS_ALREADY_RUNNING:-false}
+
+# Use provided network name if available
+BENCHMARK_NETWORK=${BENCHMARK_NETWORK:-"benchmark-network"}
+
+# Use provided results directory if available
+if [ -n "$RESULTS_DIR_HOST" ]; then
+  RESULTS_DIR_HOST_OVERRIDE="$RESULTS_DIR_HOST"
+fi
 
 # Default configurations (unchanged)
 
@@ -103,6 +113,51 @@ run_server_container() {
   echo "$server_container_id"
 }
 
+verify_database_connection() {
+  local db_tech=$1
+  local container_name=$2
+  local port=$3
+  
+  log "Verifying database connection to $container_name:$port..."
+  
+  # Test if we can connect to the database directly
+  local retries=5
+  local connected=false
+  
+  for ((i=1; i<=$retries; i++)); do
+    if docker exec $container_name redis-cli -p $port PING 2>/dev/null | grep -q "PONG"; then
+      log "Successfully connected to $db_tech at $container_name:$port"
+      connected=true
+      break
+    fi
+    log "Connection attempt $i/$retries to $container_name:$port failed, retrying..."
+    sleep 2
+  done
+  
+  if [ "$connected" = false ]; then
+    log "WARNING: Could not connect to $db_tech at $container_name:$port"
+    log "Database container logs:"
+    docker logs $container_name | tail -20
+    return 1
+  fi
+  
+  return 0
+}
+
+# Determine actual container names based on Docker PS output
+get_actual_container_names() {
+  local db_tech=$1
+  
+  # For standalone mode
+  if [[ "$db_tech" == "redis" ]]; then
+    ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep "redis" | grep -v "exporter" | head -1)
+  elif [[ "$db_tech" == "valkey" ]]; then
+    ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep "valkey" | grep -v "exporter" | head -1)
+  fi
+  
+  log "Detected actual database container name: $ACTUAL_DB_CONTAINER"
+}
+
 # --- Initialization ---
 
 # Create the results directory and log file *before* any logging happens
@@ -175,9 +230,11 @@ docker build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
 
 CURRENT_COMPOSE_FILE="" # Track the currently active compose file
 
-# Create network upfront
-log "Creating Docker network for benchmarks..."
-docker network create "$BENCHMARK_NETWORK" 2>/dev/null || log "Network $BENCHMARK_NETWORK already exists"
+# Create network upfront (unless already created by run-all.sh)
+if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
+    log "Creating Docker network for benchmarks..."
+    docker network create "$BENCHMARK_NETWORK" 2>/dev/null || log "Network $BENCHMARK_NETWORK already exists"
+fi
 
 for rate_limiter_type in "${rate_limiter_types[@]}"; do
 log "=== Testing rate limiter: $rate_limiter_type ==="
@@ -198,98 +255,127 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         use_cluster="true"
     fi
 
-    # Select appropriate Docker Compose file
-    if [[ "$use_cluster" == "true" ]]; then
-        if [[ "$db_tech" == "redis" ]]; then
-            CURRENT_COMPOSE_FILE="docker-compose-redis-cluster.yml"
-        elif [[ "$db_tech" == "valkey" ]]; then
-            CURRENT_COMPOSE_FILE="docker-compose-valkey-cluster.yml"
+    # Get actual running container names for connections
+    get_actual_container_names "$db_tech"
+
+    # If containers are already running (called from run-all.sh), skip database setup
+    if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
+        log "Using existing containers managed by run-all.sh"
+        # Verify the containers exist and are accessible
+        if [[ -z "$ACTUAL_DB_CONTAINER" ]]; then
+            log "WARNING: Could not detect running $db_tech container. Make sure it was started by run-all.sh"
+        else
+            log "Found existing $db_tech container: $ACTUAL_DB_CONTAINER"
         fi
     else
-        CURRENT_COMPOSE_FILE="docker-compose.yml"
-    fi
-
-    if [ ! -f "$CURRENT_COMPOSE_FILE" ]; then
-        log "ERROR: Docker compose file $CURRENT_COMPOSE_FILE not found."
-        exit 1
-    fi
-
-    # --- Start Database ---
-    log "Starting database container(s) using $CURRENT_COMPOSE_FILE..."
-
-    # Add network configuration to docker-compose command
-    export COMPOSE_PROJECT_NAME="ratelimit_bench"
-    export BENCHMARK_NETWORK_NAME="$BENCHMARK_NETWORK"
-    
-    # Add extra network config if it doesn't exist in compose files
-    if ! grep -q "$BENCHMARK_NETWORK" "$CURRENT_COMPOSE_FILE"; then
-        log "Adding $BENCHMARK_NETWORK to database containers..."
-        # Use -p to set project name explicitly which affects network naming
-        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
-        
-        # Connect services to our benchmark network if needed
+        # Select appropriate Docker Compose file for setting up our own containers
         if [[ "$use_cluster" == "true" ]]; then
             if [[ "$db_tech" == "redis" ]]; then
-                for i in {1..6}; do
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-node$i-1" 2>/dev/null || true
-                done
-                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-cluster-setup-1" 2>/dev/null || true
+                CURRENT_COMPOSE_FILE="docker-compose-redis-cluster.yml"
             elif [[ "$db_tech" == "valkey" ]]; then
-                for i in {1..6}; do
-                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-node$i-1" 2>/dev/null || true
-                done
-                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-cluster-setup-1" 2>/dev/null || true
+                CURRENT_COMPOSE_FILE="docker-compose-valkey-cluster.yml"
             fi
         else
-            # Connect standalone containers
-            if [[ "$db_tech" == "redis" ]]; then
-                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-1" 2>/dev/null || true
-            elif [[ "$db_tech" == "valkey" ]]; then
-                docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-1" 2>/dev/null || true
-            fi
+            CURRENT_COMPOSE_FILE="docker-compose.yml"
         fi
-    else
-        # Compose file already has network configuration
-        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
+
+        if [ ! -f "$CURRENT_COMPOSE_FILE" ]; then
+            log "ERROR: Docker compose file $CURRENT_COMPOSE_FILE not found."
+            exit 1
+        fi
     fi
-    
-    log "Waiting for database container(s) to be ready..."
-    
-    # More robust health checks for database containers
-    if [[ "$use_cluster" == "true" ]]; then
-        # For cluster, just wait longer since health check is more complex
-        log "Waiting for cluster initialization (30s)..."
-        sleep 30
-    else
-        # For standalone, verify the database is responding
-        max_db_wait=30
-        db_ready=false
-        db_container=""
+
+    # --- Start Database (only if not using pre-existing containers) ---
+    if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
+        log "Starting database container(s) using $CURRENT_COMPOSE_FILE..."
+
+        # Add network configuration to docker-compose command
+        export COMPOSE_PROJECT_NAME="ratelimit_bench"
+        export BENCHMARK_NETWORK_NAME="$BENCHMARK_NETWORK"
         
-        if [[ "$db_tech" == "redis" ]]; then
-            db_container="redis"
-            db_port=6379
-        elif [[ "$db_tech" == "valkey" ]]; then
-            db_container="valkey"
-            db_port=6379
+        # Add extra network config if it doesn't exist in compose files
+        if ! grep -q "$BENCHMARK_NETWORK" "$CURRENT_COMPOSE_FILE"; then
+            log "Adding $BENCHMARK_NETWORK to database containers..."
+            # Use -p to set project name explicitly which affects network naming
+            docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
+            
+            # Connect services to our benchmark network if needed
+            if [[ "$use_cluster" == "true" ]]; then
+                if [[ "$db_tech" == "redis" ]]; then
+                    for i in {1..6}; do
+                        docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-node$i-1" 2>/dev/null || true
+                    done
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-cluster-setup-1" 2>/dev/null || true
+                elif [[ "$db_tech" == "valkey" ]]; then
+                    for i in {1..6}; do
+                        docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-node$i-1" 2>/dev/null || true
+                    done
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-cluster-setup-1" 2>/dev/null || true
+                fi
+            else
+                # Connect standalone containers
+                if [[ "$db_tech" == "redis" ]]; then
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-redis-1" 2>/dev/null || true
+                elif [[ "$db_tech" == "valkey" ]]; then
+                    docker network connect "$BENCHMARK_NETWORK" "ratelimit_bench-valkey-1" 2>/dev/null || true
+                fi
+            fi
+        else
+            # Compose file already has network configuration
+            docker-compose -f "$CURRENT_COMPOSE_FILE" -p "ratelimit_bench" up -d --remove-orphans --force-recreate
         fi
         
-        log "Checking if $db_container is ready..."
-        for ((i=1; i<=max_db_wait; i++)); do
-            if docker exec ratelimit_bench-$db_container-1 redis-cli -p $db_port PING 2>/dev/null | grep -q "PONG"; then
-                log "Database container $db_container is ready!"
-                db_ready=true
-                break
-            fi
-            log "Waiting for database to be ready... attempt ($i/$max_db_wait)"
-            sleep 1
-        done
+        log "Waiting for database container(s) to be ready..."
         
-        if [ "$db_ready" = false ]; then
-            log "WARNING: Database may not be fully ready, but continuing..."
-            log "Database container status:"
-            docker ps | grep $db_container || true
-            docker logs ratelimit_bench-$db_container-1 | tail -20
+        # More robust health checks for database containers
+        if [[ "$use_cluster" == "true" ]]; then
+            log "Waiting for cluster initialization (30s)..."
+            sleep 30
+        else
+            max_db_wait=30
+            db_ready=false
+            db_container=""
+            
+            if [[ "$db_tech" == "redis" ]]; then
+                db_container="redis"
+                db_port=6379
+            elif [[ "$db_tech" == "valkey" ]]; then
+                db_container="valkey"
+                db_port=6379
+            fi
+            
+            log "Checking if $db_container is ready..."
+            for ((i=1; i<=max_db_wait; i++)); do
+                if docker exec ratelimit_bench-$db_container-1 redis-cli -p $db_port PING 2>/dev/null | grep -q "PONG"; then
+                    log "Database container $db_container is ready!"
+                    db_ready=true
+                    break
+                fi
+                log "Waiting for database to be ready... attempt ($i/$max_db_wait)"
+                sleep 1
+            done
+            
+            if [ "$db_ready" = false ]; then
+                log "WARNING: Database may not be fully ready, but continuing..."
+                log "Database container status:"
+                docker ps | grep $db_container || true
+                docker logs ratelimit_bench-$db_container-1 | tail -20
+            fi
+        fi
+    else
+        log "Using existing database containers managed by run-all.sh"
+        # When using existing containers, we should still try to verify connectivity
+        if [[ "$use_cluster" == "true" ]]; then
+            log "Using existing cluster configuration"
+        else
+            if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+                log "Verifying connection to $ACTUAL_DB_CONTAINER"
+                if docker exec "$ACTUAL_DB_CONTAINER" redis-cli PING 2>/dev/null | grep -q "PONG"; then
+                    log "Successfully verified connection to $ACTUAL_DB_CONTAINER"
+                else
+                    log "WARNING: Could not verify connection to $ACTUAL_DB_CONTAINER"
+                fi
+            fi
         fi
     fi
 
@@ -297,30 +383,65 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     server_env_vars=()
     server_env_vars+=(-e "NODE_ENV=production")
     server_env_vars+=(-e "PORT=${DEFAULT_SERVER_PORT}")
-    server_env_vars+=(-e "MODE=${rate_limiter_type}") # Pass the full mode like 'valkey-glide:cluster'
+    server_env_vars+=(-e "MODE=${rate_limiter_type}")
     server_env_vars+=(-e "LOG_LEVEL=info")
+    server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
+
+    # Prioritize Valkey configurations for better performance
+    if [[ "$db_tech" == "valkey" ]]; then
+        server_env_vars+=(-e "VALKEY_COMMAND_TIMEOUT=3000")
+        server_env_vars+=(-e "VALKEY_RECONNECT_STRATEGY=constant")
+        server_env_vars+=(-e "VALKEY_RECONNECT_DELAY=100")
+    fi
 
     # Set DB connection details based on mode
     if [[ "$use_cluster" == "true" ]]; then
         server_env_vars+=(-e "USE_${db_tech^^}_CLUSTER=true") # USE_VALKEY_CLUSTER=true or USE_REDIS_CLUSTER=true
-        if [[ "$db_tech" == "redis" ]]; then
-            # Use fully qualified container names in the network for cluster mode
-            server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379,ratelimit_bench-redis-node4-1:6379,ratelimit_bench-redis-node5-1:6379,ratelimit_bench-redis-node6-1:6379")
-        elif [[ "$db_tech" == "valkey" ]]; then
-            # Use fully qualified container names in the network for cluster mode
-            server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:8080,ratelimit_bench-valkey-node2-1:8080,ratelimit_bench-valkey-node3-1:8080,ratelimit_bench-valkey-node4-1:8080,ratelimit_bench-valkey-node5-1:8080,ratelimit_bench-valkey-node6-1:8080")
+        
+        if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
+            # Using containers managed by run-all.sh
+            if [[ "$db_tech" == "redis" ]]; then
+                server_env_vars+=(-e "REDIS_CLUSTER_NODES=benchmark-redis-cluster:6379")
+            elif [[ "$db_tech" == "valkey" ]]; then
+                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=benchmark-valkey-cluster:6379")
+            fi
+        else
+            # Using containers managed by run-benchmark.sh
+            if [[ "$db_tech" == "redis" ]]; then
+                server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379,ratelimit_bench-redis-node4-1:6379,ratelimit_bench-redis-node5-1:6379,ratelimit_bench-redis-node6-1:6379")
+            elif [[ "$db_tech" == "valkey" ]]; then
+                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:6379,ratelimit_bench-valkey-node2-1:6379,ratelimit_bench-valkey-node3-1:6379,ratelimit_bench-valkey-node4-1:6379,ratelimit_bench-valkey-node5-1:6379,ratelimit_bench-valkey-node6-1:6379")
+            fi
         fi
     else
-        # Use fully qualified container names for standalone mode
-        if [[ "$db_tech" == "redis" ]]; then
-            server_env_vars+=(-e "REDIS_HOST=ratelimit_bench-redis-1" -e "REDIS_PORT=6379")
-        elif [[ "$db_tech" == "valkey" ]]; then 
-            server_env_vars+=(-e "VALKEY_HOST=ratelimit_bench-valkey-1" -e "VALKEY_PORT=6379")
+        # For standalone mode
+        if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
+            # Using containers managed by run-all.sh
+            if [[ "$db_tech" == "redis" ]]; then
+                server_env_vars+=(-e "REDIS_HOST=benchmark-redis" -e "REDIS_PORT=6379")
+            elif [[ "$db_tech" == "valkey" ]]; then
+                server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey" -e "VALKEY_PORT=6379")
+            fi
+        else
+            # For our own containers, use detected names if available
+            if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+                if [[ "$db_tech" == "redis" ]]; then
+                    log "Using detected Redis container: $ACTUAL_DB_CONTAINER"
+                    server_env_vars+=(-e "REDIS_HOST=$ACTUAL_DB_CONTAINER" -e "REDIS_PORT=6379")
+                elif [[ "$db_tech" == "valkey" ]]; then
+                    log "Using detected Valkey container: $ACTUAL_DB_CONTAINER"
+                    server_env_vars+=(-e "VALKEY_HOST=$ACTUAL_DB_CONTAINER" -e "VALKEY_PORT=6379")
+                fi
+            else
+                # Fallback to standard naming if detection failed
+                if [[ "$db_tech" == "redis" ]]; then
+                    server_env_vars+=(-e "REDIS_HOST=ratelimit_bench-redis-1" -e "REDIS_PORT=6379")
+                elif [[ "$db_tech" == "valkey" ]]; then 
+                    server_env_vars+=(-e "VALKEY_HOST=ratelimit_bench-valkey-1" -e "VALKEY_PORT=6379")
+                fi
+            fi
         fi
     fi
-    
-    # Add debug environment variable
-    server_env_vars+=(-e "DEBUG=rate-limiter-flexible:*,@valkey/valkey-glide:*")
 
     # --- Start Server Container ---
     log "Starting server container ($SERVER_IMAGE_TAG)..."
@@ -332,7 +453,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     log "Waiting for server container to be ready..."
     # Wait for the server to log that it's listening
-    max_wait=120 # Increased timeout from 60 to 120 seconds
+    max_wait=120
     interval=3
     elapsed=0
     server_ready=false
@@ -389,19 +510,18 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         for conn in "${concurrency_levels[@]}"; do
             test_id="${rate_limiter_type}_${req_type}_${conn}c_${duration}s"
             log_file_name="${RESULTS_DIR_HOST}/${test_id}.log"
-            results_file_name="${RESULTS_DIR_HOST}/${test_id}.json" # Loadtest container writes here
-
+            results_file_name="${RESULTS_DIR_HOST}/${test_id}.json"
             log "--- Running test: $test_id ---"
             log "Concurrency: $conn, Request Type: $req_type, Duration: ${duration}s"
 
             # Configure Loadtest Environment
             loadtest_env_vars=(
-                -e "TARGET_URL=http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}" # Use container name for DNS resolution
+                -e "TARGET_URL=http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}"
                 -e "DURATION=${duration}"
                 -e "CONNECTIONS=${conn}"
                 -e "REQUEST_TYPE=${req_type}"
-                -e "OUTPUT_FILE=/app/results/${test_id}.json" # Path inside the container
-                -e "RATE_LIMITER_TYPE=${rate_limiter_type}" # Pass for context if needed by loadtest script
+                -e "OUTPUT_FILE=/app/results/${test_id}.json" 
+                -e "RATE_LIMITER_TYPE=${rate_limiter_type}"
             )
 
             # First run a warm-up phase
@@ -436,7 +556,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 --network="$BENCHMARK_NETWORK" \
                 -v "${RESULTS_DIR_HOST}:/app/results" \
                 "${loadtest_env_vars[@]}" \
-                "$LOADTEST_IMAGE_TAG" # Assumes CMD in Dockerfile.loadtest runs the benchmark
+                "$LOADTEST_IMAGE_TAG"
 
             exit_code=$?
             if [ $exit_code -ne 0 ]; then

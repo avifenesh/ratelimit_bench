@@ -101,22 +101,43 @@ start_containers() {
 run_benchmarks() {
   log "Starting benchmark runs..."
   
-  # Run light workload benchmark
+  # Define benchmark script location
+  BENCHMARK_SCRIPT="./scripts/run-benchmark.sh"
+  
+  # Ensure benchmark script is executable
+  chmod +x "$BENCHMARK_SCRIPT"
+  
+  # Define common parameters
+  CONCURRENCY_LEVELS="10 50 100 500 1000"
+  REQUEST_TYPES="light heavy"
+  RATE_LIMITER_TYPES="valkey-glide valkey-io ioredis valkey-glide:cluster valkey-io:cluster ioredis:cluster"
+  
+  # Set environment variables to tell run-benchmark.sh that containers are already running
+  export CONTAINERS_ALREADY_RUNNING="true"
+  export BENCHMARK_NETWORK="benchmark-network"
+  export RESULTS_DIR_HOST="$RESULTS_DIR"
+  
+  # Run light workload benchmark with short duration
   log "Running light workload benchmark (short duration)..."
-  DURATION=30 SCENARIO=light npm run benchmark
+  DURATION=30 $BENCHMARK_SCRIPT
   
-  # Run heavy workload benchmark
+  # Run heavy workload benchmark with short duration
   log "Running heavy workload benchmark (short duration)..."
-  DURATION=30 SCENARIO=heavy npm run benchmark
+  DURATION=30 SCENARIO=heavy $BENCHMARK_SCRIPT
   
-  # Run longer benchmarks
+  # Run longer benchmarks if requested
   if [ "$RUN_LONG_BENCHMARKS" = "true" ]; then
     log "Running light workload benchmark (long duration)..."
-    DURATION=120 SCENARIO=light npm run benchmark
+    DURATION=120 SCENARIO=light $BENCHMARK_SCRIPT
     
     log "Running heavy workload benchmark (long duration)..."
-    DURATION=120 SCENARIO=heavy npm run benchmark
+    DURATION=120 SCENARIO=heavy $BENCHMARK_SCRIPT
   fi
+  
+  # Unset environment variables
+  unset CONTAINERS_ALREADY_RUNNING
+  unset BENCHMARK_NETWORK
+  unset RESULTS_DIR_HOST
   
   log_success "All benchmark runs completed"
 }
