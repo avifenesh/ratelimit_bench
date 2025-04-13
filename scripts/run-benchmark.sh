@@ -142,21 +142,30 @@ verify_database_connection() {
   fi
   
   return 0
-}
+}    # Determine actual container names based on Docker PS output
+    get_actual_container_names() {
+      local db_tech=$1
+      
+      # For standalone mode
+      if [[ "$db_tech" == "redis" ]]; then
+        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "redis|Redis" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
+      elif [[ "$db_tech" == "valkey" ]]; then
+        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "valkey|Valkey" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
+      fi
+      
+      # If we didn't find standalone containers, use the first node in cluster mode
+      if [[ -z "$ACTUAL_DB_CONTAINER" && "$db_tech" == "redis" ]]; then
+        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "redis-node1" | head -1)
+      elif [[ -z "$ACTUAL_DB_CONTAINER" && "$db_tech" == "valkey" ]]; then
+        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "valkey-node1" | head -1)
+      fi
 
-# Determine actual container names based on Docker PS output
-get_actual_container_names() {
-  local db_tech=$1
-  
-  # For standalone mode
-  if [[ "$db_tech" == "redis" ]]; then
-    ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep "redis" | grep -v "exporter" | head -1)
-  elif [[ "$db_tech" == "valkey" ]]; then
-    ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep "valkey" | grep -v "exporter" | head -1)
-  fi
-  
-  log "Detected actual database container name: $ACTUAL_DB_CONTAINER"
-}
+      if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
+        log "Detected actual database container name: $ACTUAL_DB_CONTAINER"
+      else
+        log "WARNING: Could not detect any $db_tech container!"
+      fi
+    }
 
 # --- Initialization ---
 
@@ -394,36 +403,46 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         server_env_vars+=(-e "VALKEY_RECONNECT_DELAY=100")
     fi
 
+    # Important network fix: Make sure both server and DB containers are on the benchmark network
+    log "Ensuring proper network connectivity between containers..."
+    
+    # Check actual standalone container name to use
+    if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
+        # When run from run-all.sh
+        if [[ "$db_tech" == "valkey" ]]; then
+            DB_CONTAINER_NAME="benchmark-valkey"
+        else
+            DB_CONTAINER_NAME="benchmark-redis"
+        fi
+    else
+        # When run standalone, use the detected container name
+        DB_CONTAINER_NAME="$ACTUAL_DB_CONTAINER"
+    fi
+    
     # Set DB connection details based on mode
     if [[ "$use_cluster" == "true" ]]; then
         server_env_vars+=(-e "USE_${db_tech^^}_CLUSTER=true") # USE_VALKEY_CLUSTER=true or USE_REDIS_CLUSTER=true
         
-        if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
-            # Using containers managed by run-all.sh
-            if [[ "$db_tech" == "redis" ]]; then
-                server_env_vars+=(-e "REDIS_CLUSTER_NODES=benchmark-redis-cluster:6379")
-            elif [[ "$db_tech" == "valkey" ]]; then
-                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=benchmark-valkey-cluster:6379")
-            fi
-        else
-            # Using containers managed by run-benchmark.sh
-            if [[ "$db_tech" == "redis" ]]; then
-                server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379,ratelimit_bench-redis-node4-1:6379,ratelimit_bench-redis-node5-1:6379,ratelimit_bench-redis-node6-1:6379")
-            elif [[ "$db_tech" == "valkey" ]]; then
-                server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:6379,ratelimit_bench-valkey-node2-1:6379,ratelimit_bench-valkey-node3-1:6379,ratelimit_bench-valkey-node4-1:6379,ratelimit_bench-valkey-node5-1:6379,ratelimit_bench-valkey-node6-1:6379")
-            fi
+        # For cluster mode, use consistent naming:
+        if [[ "$db_tech" == "redis" ]]; then
+            # Use just first 3 nodes for better reliability
+            server_env_vars+=(-e "REDIS_CLUSTER_NODES=ratelimit_bench-redis-node1-1:6379,ratelimit_bench-redis-node2-1:6379,ratelimit_bench-redis-node3-1:6379")
+        elif [[ "$db_tech" == "valkey" ]]; then
+            # Use just first 3 nodes for better reliability
+            server_env_vars+=(-e "VALKEY_CLUSTER_NODES=ratelimit_bench-valkey-node1-1:6379,ratelimit_bench-valkey-node2-1:6379,ratelimit_bench-valkey-node3-1:6379")
         fi
     else
-        # For standalone mode
+        # For standalone mode, use consistent naming from run-all.sh
         if [[ "$SKIP_CONTAINER_SETUP" == "true" ]]; then
-            # Using containers managed by run-all.sh
             if [[ "$db_tech" == "redis" ]]; then
+                log "Using Redis container: benchmark-redis"
                 server_env_vars+=(-e "REDIS_HOST=benchmark-redis" -e "REDIS_PORT=6379")
             elif [[ "$db_tech" == "valkey" ]]; then
+                log "Using Valkey container: benchmark-valkey" 
                 server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey" -e "VALKEY_PORT=6379")
             fi
         else
-            # For our own containers, use detected names if available
+            # Use the detected container name when running standalone
             if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
                 if [[ "$db_tech" == "redis" ]]; then
                     log "Using detected Redis container: $ACTUAL_DB_CONTAINER"
@@ -433,11 +452,11 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                     server_env_vars+=(-e "VALKEY_HOST=$ACTUAL_DB_CONTAINER" -e "VALKEY_PORT=6379")
                 fi
             else
-                # Fallback to standard naming if detection failed
+                # Fallback to simplified container names
                 if [[ "$db_tech" == "redis" ]]; then
-                    server_env_vars+=(-e "REDIS_HOST=ratelimit_bench-redis-1" -e "REDIS_PORT=6379")
+                    server_env_vars+=(-e "REDIS_HOST=benchmark-redis" -e "REDIS_PORT=6379")
                 elif [[ "$db_tech" == "valkey" ]]; then 
-                    server_env_vars+=(-e "VALKEY_HOST=ratelimit_bench-valkey-1" -e "VALKEY_PORT=6379")
+                    server_env_vars+=(-e "VALKEY_HOST=benchmark-valkey" -e "VALKEY_PORT=6379")
                 fi
             fi
         fi
@@ -583,31 +602,58 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         done
     done
 
-    # --- Stop Server and Database for this iteration ---
+    # --- Cleanup after testing a specific rate limiter type ---
     log "Stopping server container..."
-    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1
-    docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1
+    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    log "Server container stopped and removed."
 
-    log "Stopping database container(s) for $rate_limiter_type..."
-    docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
-    CURRENT_COMPOSE_FILE="" # Reset for next loop iteration
+    # --- Conditional Database Cleanup ---
+    # Only stop database containers if this script started them (i.e., not run via run-all.sh)
+    if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
+        log "Stopping database container(s) for $rate_limiter_type (managed by run-benchmark.sh)..."
+        if [[ -n "$CURRENT_COMPOSE_FILE" ]]; then
+            # Use docker-compose down to stop and remove containers defined in the specific compose file
+            docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
+            log "Database containers from $CURRENT_COMPOSE_FILE stopped."
+            CURRENT_COMPOSE_FILE="" # Reset compose file variable for the next iteration
+        else
+            log "No specific compose file was used for $rate_limiter_type, skipping database stop."
+        fi
+    else
+        # Add explicit logging for clarity when skipping
+        log "Skipping database container stop for $rate_limiter_type as they are managed externally (by run-all.sh)."
+    fi
 
-    log "=== Finished testing rate limiter: $rate_limiter_type ==="
-    sleep 10 # Cooldown period between rate limiter types
+    # Cooldown period between rate limiter types
+    if [[ "$rate_limiter_type" != "${rate_limiter_types[-1]}" ]]; then
+        log "Cooldown period (${COOLDOWN_BETWEEN_TYPES}s) before next rate limiter type..."
+        sleep "$COOLDOWN_BETWEEN_TYPES"
+    fi
 
-done
+done # End of the main loop iterating through rate_limiter_types
 
-# --- Final Cleanup ---
+# --- Final Script Cleanup ---
+# This cleanup runs once after the entire script finishes or on error/interrupt
+cleanup_final() {
+    log "Performing final cleanup..."
+    # Ensure server/loadtest containers specific to this script are gone
+    docker stop "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    docker rm "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 
-# cleanup_containers # Should be mostly clean already, but run just in case
+    # Only perform docker-compose down if NOT managed by run-all.sh
+    if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
+        if [[ -n "$CURRENT_COMPOSE_FILE" ]]; then # Check if a compose file was active
+             log "Final shutdown of database containers using $CURRENT_COMPOSE_FILE..."
+             docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
+        fi
+        # Optionally, remove the network if this script created it
+        # docker network rm "$BENCHMARK_NETWORK" 2>/dev/null || true
+    fi
+    log "Final cleanup complete."
+}
 
-log "Benchmark suite finished."
-log "Results are stored in: ${RESULTS_DIR_HOST}"
+# Register the final cleanup function for exit, error, interrupt, termination
+trap cleanup_final EXIT ERR INT TERM
 
-# --- Generate Report (Optional) ---
-if [ -f "scripts/generate-report.sh" ]; then
-  log "Generating report..."
-  ./scripts/generate-report.sh "$RESULTS_DIR_HOST"
-fi
-
-exit 0
+log_success "Benchmark suite finished successfully."

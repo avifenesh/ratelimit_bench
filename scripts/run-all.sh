@@ -73,23 +73,63 @@ start_containers() {
     log_error "No built code found. Make sure the build step completed successfully."
   fi
   
+  # Create the benchmark network explicitly
+  log "Creating benchmark network..."
+  docker network create benchmark-network 2>/dev/null || true
+  
   # Start Valkey containers first (prioritizing Valkey implementations)
   log "Starting Valkey standalone..."
   docker-compose up -d valkey
   
+  # Ensure Valkey standalone is connected to the benchmark network
+  log "Connecting Valkey standalone to benchmark network..."
+  docker network connect benchmark-network benchmark-valkey 2>/dev/null || true
+  
   log "Starting Valkey cluster..."
   docker-compose -f docker-compose-valkey-cluster.yml up -d
+  
+  # Connect Valkey cluster nodes to benchmark network
+  log "Connecting Valkey cluster nodes to benchmark network..."
+  for i in {1..6}; do
+    docker network connect benchmark-network ratelimit_bench-valkey-node$i-1 2>/dev/null || true
+  done
   
   # Then start Redis containers
   log "Starting Redis standalone..."
   docker-compose up -d redis
   
+  # Ensure Redis standalone is connected to the benchmark network
+  log "Connecting Redis standalone to benchmark network..."
+  docker network connect benchmark-network benchmark-redis 2>/dev/null || true
+  
   log "Starting Redis cluster..."
   docker-compose -f docker-compose-redis-cluster.yml up -d
+  
+  # Connect Redis cluster nodes to benchmark network
+  log "Connecting Redis cluster nodes to benchmark network..."
+  for i in {1..6}; do
+    docker network connect benchmark-network ratelimit_bench-redis-node$i-1 2>/dev/null || true
+  done
   
   # Start monitoring containers
   log "Starting monitoring containers..."
   docker-compose up -d prometheus grafana redis-exporter valkey-exporter
+  
+  # Make sure all containers are on the same network
+  log "Ensuring all containers are on the benchmark network..."
+  for container in $(docker ps --format "{{.Names}}"); do
+    docker network connect benchmark-network $container 2>/dev/null || true
+  done
+  
+  # Verify network connectivity
+  log "Verifying network connectivity between containers..."
+  # Check if Valkey container is accessible
+  docker exec benchmark-valkey redis-cli PING 2>/dev/null | grep -q "PONG" && \
+    log "Valkey container is accessible" || log "WARNING: Valkey container is not responding"
+  
+  # Check if Redis container is accessible
+  docker exec benchmark-redis redis-cli PING 2>/dev/null | grep -q "PONG" && \
+    log "Redis container is accessible" || log "WARNING: Redis container is not responding"
   
   # Wait for containers to be ready
   log "Waiting for containers to be ready..."
