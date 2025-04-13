@@ -130,7 +130,6 @@ export async function createClient(): Promise<RateLimiterClient> {
             port: config.valkey.port,
           },
         ],
-        requestTimeout: 1000,
         useTLS: false,
       });
       Logger.init("off");
