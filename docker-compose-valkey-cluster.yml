@@ -149,16 +149,6 @@ services:
     command: >
       bash -c '
         echo "Waiting for nodes to be ready..."
-        for i in 1 2 3 4 5 6; do
-          until valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node$$i -p 8080 PING; do
-            sleep 1
-          done
-        done
         echo "All nodes are ready. Creating cluster..."
-        echo yes | valkey-cli --cluster create ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node2:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node3:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node4:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node5:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node6:8080 --cluster-replicas 1
-        
-        echo "Cluster setup complete. Checking cluster info..."
-        sleep 5
-        valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER INFO
         valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER NODES
       '
