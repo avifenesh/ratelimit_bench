@@ -4,26 +4,32 @@ A comprehensive benchmark suite for comparing Valkey and Redis performance with 
 
 ## Project Overview
 
-This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible). The main goal is to compare different rate limiter implementations in a fair manner – but with a focus on highlighting Valkey and [Valkey Glide's](<https://github.com/valkey-io/valkey-glide>) performance advantages.
+This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible). The main goal is to compare different rate limiter implementations in a fair manner.
 
 ## Architecture
 
 - **Server**: Fastify-based API server with rate limiting middleware
   - Main server (`src/server/index.ts`)
-  - API routes (`src/server/routes/index.ts`) - Note: Prometheus `/metrics` endpoint removed.
-- **Rate Limiters**: Using rate-limiter-flexible with various backends:
-  - **Valkey Glide** – Modern TypeScript-native client for Valkey, built with main focus on stability, reliability, performance, and scalability. Glide was designed with years of experience with users pains, with other clients, with the goal to bring fault tolerance and user experience to the next level.
-  - **IOValkey** – Client based on the ioredis API, enhanced for performance using valkey.
+  - Configuration (`src/server/config/index.ts`)
+  - API routes (`src/server/routes/index.ts`)
+  - Rate limiter factory (`src/server/lib/rateLimiterFactory.ts`)
+  - Client management (`src/server/lib/clientFactory.ts`)
+- **Rate Limiters**: Using rate-limiter-flexible with different backends:
+  - **Valkey Glide** – Modern TypeScript-native client, built with a focus on stability, reliability, performance, and scalability. Designed specifically to provide superior fault tolerance and user experience.
+  - **IOValkey** – Client based on the ioredis API, enhanced with Valkey performance.
   - **Redis IORedis** – Popular Redis client for Node.js
 - **Benchmark Layer**:
-  - Autocannon loads tests with resource monitoring (`src/benchmark/autocannon.ts`)
+  - Autocannon for HTTP load testing with resource monitoring (`src/benchmark/autocannon.ts`)
   - Results collection and processing (`src/benchmark/results.ts`)
   - CPU/memory resource tracking (`src/benchmark/monitor.ts`)
 - **Infrastructure**:
   - Docker containers for both standalone and cluster configurations
   - Environment variables (`USE_REDIS_CLUSTER` and `USE_VALKEY_CLUSTER`) controlling cluster mode
-- **Reporting**:
-  - Python script (`scripts/generate_report.py`) to create HTML reports and CSV summaries.
+  - Runner applications containerized for consistent testing
+- **Scripts**:
+  - Benchmark orchestration: `scripts/run-benchmark.sh`
+  - Full test suite: `scripts/run-all.sh`
+  - Report generation: `scripts/generate_report.py` to create HTML reports and CSV summaries
 
 ## Getting Started
 
@@ -85,6 +91,33 @@ The benchmark tests the following clients (in priority order):
 1. **Valkey Glide**
 2. **IOValkey**
 3. **Redis IORedis**
+
+## Testing Scenarios
+
+The benchmark suite covers a comprehensive range of testing scenarios:
+
+1. **Workload Types**:
+   - Light workload: Minimal API processing
+   - Heavy workload: Compute-intensive API responses
+
+2. **Run Durations**:
+   - Short (30s) to long (2min) tests
+
+3. **Concurrency Levels**:
+   - 10, 50, 100, 500, 1000 simultaneous connections
+
+4. **Implementation Variations**:
+   - Each client tested in both standalone and cluster modes
+   - Cluster configurations use 3 primaries and 3 replicas (6 total nodes)
+
+## Metrics & Performance Focus
+
+The benchmark collects comprehensive metrics to highlight Valkey Glide's performance advantages:
+
+- Throughput (requests per second)
+- Latency (avg, p50, p97_5, p99)
+- Rate limit hit percentage
+- CPU and memory usage
 
 All rate limit settings are kept consistent across implementations for fair performance comparisons, and benchmark visualizations always present Valkey implementations first.
 
