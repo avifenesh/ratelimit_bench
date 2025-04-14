@@ -2,7 +2,7 @@
  * Autocannon benchmark runner
  * Main entry point for running benchmarks against the API server
  */
-import autocannon, { Instance } from "autocannon";
+import autocannon, { Instance, Result } from "autocannon";
 import { performance } from "perf_hooks";
 import { writeFileSync } from "fs";
 import { monitorResources } from "./monitor.js";
@@ -14,6 +14,27 @@ interface BenchmarkOptions {
   requestType: "light" | "heavy";
   outputFile?: string;
   rateLimiterType?: string;
+}
+
+// Helper function to extract count from statusCodeStats entry
+function getStatusCodeCount(
+  stat: Result["statusCodeStats"][keyof Result["statusCodeStats"]] | object
+): number {
+  if (typeof stat === "number") {
+    return stat;
+  }
+  // Add a more robust check for object and count property
+  if (
+    stat &&
+    typeof stat === "object" &&
+    "count" in stat &&
+    stat.count &&
+    typeof stat.count === "number"
+  ) {
+    return stat.count;
+  }
+  // Fallback for unexpected structures
+  return 0;
 }
 
 // Main benchmark function
@@ -36,9 +57,6 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
   // Start resource monitoring
   const resourceMonitor = monitorResources();
 
-  // Track rate limit hits with a local counter
-  let rateLimitHits = 0;
-
   // Track start time
   const startTime = performance.now();
 
@@ -59,15 +77,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
             method: "GET",
           },
         ],
-        // Set up client to track rate limit hits
-        setupClient: (client) => {
-          client.on("response", (statusCode, _resBytes) => {
-            if (statusCode === 429) {
-              rateLimitHits++;
-              console.log(`Rate limit hit detected, status: ${statusCode}`);
-            }
-          });
-        },
+        // Remove setupClient as we will use statusCodeStats
       },
       // Callback receives results when done
       (err, results) => {
@@ -84,6 +94,11 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
           // Calculate benchmark duration
           const endTime = performance.now();
           const actualDuration = (endTime - startTime) / 1000;
+
+          // Calculate rate limit hits from statusCodeStats
+          const rateLimitHits = results.statusCodeStats
+            ? getStatusCodeCount(results.statusCodeStats["429"])
+            : 0;
 
           // Process results
           const processedResults = {
@@ -118,7 +133,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
             timeouts: results.timeouts,
             non2xx: results.non2xx,
 
-            // Use the local counter for rate limit hits
+            // Use the calculated count from statusCodeStats
             rateLimitHits,
 
             // Resource usage
@@ -136,7 +151,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
           console.log(`Latency avg: ${processedResults.latency.average} ms`);
           console.log(`Latency p97_5: ${processedResults.latency.p97_5} ms`);
           console.log(`Latency p99: ${processedResults.latency.p99} ms`);
-          console.log(`Rate limit hits: ${processedResults.rateLimitHits}`);
+          console.log(`Rate limit hits: ${processedResults.rateLimitHits}`); // Now uses statusCodeStats
           console.log(
             `CPU usage avg: ${
               Math.round(resourceStats.cpu.average * 100) / 100

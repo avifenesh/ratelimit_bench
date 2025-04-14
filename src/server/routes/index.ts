@@ -64,8 +64,9 @@ export default async function routes(
       },
       rateLimiter: rateLimiter,
       onExceeded: (_request: FastifyRequest, key: string) => {
-        fastify.log.warn(`Rate limit exceeded for key: ${key}`);
-        // Track rate limit hit when exceeded
+        fastify.log.warn(
+          `Rate limit exceeded for key: ${key} - Incrementing rateLimitHits.`
+        );
         rateLimitHits.inc({ rate_limiter: config.mode });
       },
     },
@@ -98,22 +99,20 @@ export default async function routes(
       } catch (error) {
         // Check if this is a rate limit error
         if (error instanceof RateLimiterRes) {
-          // Rate limit was exceeded - this should be handled by the rate limit plugin,
-          // but we can also track it here for completeness
-          rateLimitHits.inc({ rate_limiter: config.mode });
-
+          // Rate limit was exceeded - this is handled by the rate limit plugin's onExceeded callback.
+          // We still log the duration with 429 status.
           const duration = (performance.now() - start) / 1000;
           httpRequestDuration.observe(
             {
               method: "GET",
               route: "/light",
-              status_code: 429,
+              status_code: 429, // Rate limit status
               rate_limiter: config.mode,
             },
             duration
           );
 
-          throw error;
+          throw error; // Re-throw to let Fastify handle the 429 response
         }
 
         // Other errors
@@ -163,10 +162,8 @@ export default async function routes(
       } catch (error) {
         // Check if this is a rate limit error
         if (error instanceof RateLimiterRes) {
-          // Rate limit was exceeded - this should be handled by the rate limit plugin,
-          // but we can also track it here for completeness
-          rateLimitHits.inc({ rate_limiter: config.mode });
-
+          // Rate limit was exceeded - this is handled by the rate limit plugin's onExceeded callback.
+          // We still log the duration with 429 status.
           const duration = (performance.now() - start) / 1000;
           httpRequestDuration.observe(
             {

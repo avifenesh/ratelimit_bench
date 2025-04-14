@@ -567,12 +567,15 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
             log "--- Running test: $test_id ---"
             log "Concurrency: $conn, Request Type: $req_type, Duration: ${duration}s"
 
+            full_target_url="http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}/${req_type}"
+            log "Target URL for loadtest: $full_target_url"
+
             loadtest_env_vars=(
-                -e "TARGET_URL=http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}"
+                -e "TARGET_URL=${full_target_url}"
                 -e "DURATION=${duration}"
                 -e "CONNECTIONS=${conn}"
                 -e "REQUEST_TYPE=${req_type}"
-                -e "OUTPUT_FILE=/app/results/${test_id}.json" 
+                -e "OUTPUT_FILE=/app/results/${test_id}.json"
                 -e "RATE_LIMITER_TYPE=${rate_limiter_type}"
             )
 
