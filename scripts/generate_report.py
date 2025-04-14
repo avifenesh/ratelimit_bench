@@ -10,7 +10,6 @@ import base64
 from io import BytesIO
 from datetime import datetime
 import re
-import numpy as np
 
 DEFAULT_RESULTS_DIR = "./results/latest"
 REPORT_SUBDIR = "report"
@@ -38,7 +37,6 @@ def parse_filename(filename):
     req_type = "unknown"
     concurrency = 0
     duration = 0
-    run_number = None
 
     # Iterate through parts to identify components
     i = 0
@@ -64,13 +62,6 @@ def parse_filename(filename):
         elif part == "cluster":
             mode_explicitly_found = True # Mark cluster mode found explicitly
             i += 1
-        elif part.startswith('run'):
-            try:
-                run_number = int(part[3:])
-                i += 1
-            except ValueError:
-                implementation_parts.append(part)
-                i += 1
         else:
             implementation_parts.append(part)
             i += 1
@@ -79,21 +70,15 @@ def parse_filename(filename):
 
     # Fallback for concurrency if not found via 'c' suffix
     if concurrency == 0:
-        match = re.search(r'_(\d+)c(?:_|$)', base) # Look for _<digits>c_ or _<digits>c at end
+        match = re.search(r'_(\\d+)c(?:_|$)', base) # Look for _<digits>c_ or _<digits>c at end
         if match:
             concurrency = int(match.group(1))
 
     # Fallback for duration if not found via 's' suffix
     if duration == 0:
-        match = re.search(r'_(\d+)s(?:_|$)', base) # Look for _<digits>s_ or _<digits>s at end
+        match = re.search(r'_(\\d+)s(?:_|$)', base) # Look for _<digits>s_ or _<digits>s at end
         if match:
             duration = int(match.group(1))
-
-    # Extract run number if not found
-    if run_number is None:
-        match = re.search(r'run(\d+)', base)
-        if match:
-            run_number = int(match.group(1))
 
     # Determine mode based on explicit flag or implementation name suffix
     if mode_explicitly_found or implementation.endswith("-cluster") or implementation.endswith(":cluster"):
@@ -104,11 +89,8 @@ def parse_filename(filename):
         mode = "standalone"
         implementation_group = implementation
 
-    # Clean up the implementation name to remove run number if it's part of the name
-    implementation = re.sub(r'[-_]run\d+$', '', implementation)
-    implementation_group = re.sub(r'[-_]run\d+$', '', implementation_group)
 
-    return implementation, mode, req_type, concurrency, duration, implementation_group, run_number
+    return implementation, mode, req_type, concurrency, duration, implementation_group
 
 def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue_col='ImplementationGroup', filter_req_type=None, filter_mode=None):
     """Generates a matplotlib chart and returns it as a base64 encoded string."""
@@ -345,7 +327,7 @@ def main():
                 result_json = json.load(f)
 
             filename = os.path.basename(result_file)
-            implementation, mode, req_type, concurrency, file_duration, impl_group, run_number = parse_filename(filename)
+            implementation, mode, req_type, concurrency, file_duration, impl_group = parse_filename(filename)
 
             # Prioritize Valkey implementations
             priority = 1 if 'valkey' in implementation.lower() else 2
