@@ -45,7 +45,7 @@ This project benchmarks rate limiting performance using [Valkey](https://valkey.
     ```bash
     # Create virtual environment (if you don't have one)
     # uv venv
-    # Activate virtual environment (e.g., Linux/macOS)
+    # Activate virtual environment
     # source .venv/bin/activate
     uv pip install -r requirements.txt
     ```

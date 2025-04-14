@@ -61,9 +61,10 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
         ],
         // Set up client to track rate limit hits
         setupClient: (client) => {
-          client.on("response", (statusCode) => {
+          client.on("response", (statusCode, _resBytes) => {
             if (statusCode === 429) {
               rateLimitHits++;
+              console.log(`Rate limit hit detected, status: ${statusCode}`);
             }
           });
         },

@@ -24,6 +24,7 @@ export async function rateLimiter(
     const rateLimiterRes = error as RateLimiterRes;
     const seconds = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
     reply.header("Retry-After", String(seconds));
+    reply.header("X-RateLimit-Reset", String(seconds));
     return reply
       .code(429)
       .send(`Too Many Requests: Retry after ${seconds} seconds`);
