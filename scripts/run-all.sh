@@ -51,10 +51,6 @@ log_error() {
 setup_environment() {
   log "Setting up environment..."
   
-  # Create other necessary directories
-  mkdir -p "./grafana/dashboards"
-  mkdir -p "./grafana/provisioning"
-  
   # Create Valkey config file if it doesn't exist
   if [ ! -f "./valkey.conf" ]; then
     echo "# Valkey configuration for benchmark" > ./valkey.conf
@@ -133,10 +129,6 @@ start_containers() {
   for i in {1..6}; do
     docker network connect benchmark-network ratelimit_bench-redis-node$i-1 2>/dev/null || true
   done
-  
-  # Start monitoring containers
-  log "Starting monitoring containers..."
-  docker-compose up -d prometheus grafana redis-exporter valkey-exporter
   
   # Make sure all containers are on the same network
   log "Ensuring all containers are on the benchmark network..."
@@ -311,17 +303,9 @@ show_results() {
   log_success "All benchmark operations completed successfully!"
   log_success "Results are available at: ${RESULTS_DIR}"
   log_success "Full logs are available at: ${LOG_FILE}"
-  log_success "Open the report in your browser: http://localhost:8080"
-  
-  # Start a simple HTTP server to view results
-  (cd "$RESULTS_BASE_DIR" && python3 -m http.server 8080 &)
-  
-  echo
-  log "Press Enter to stop the HTTP server when finished..."
-  read
-  
-  # Kill the HTTP server
-  pkill -f "python3 -m http.server 8080" || true
+  # Update the viewing instructions
+  log_success "Open the main results index in your browser: file://${RESULTS_BASE_DIR}/index.html"
+  log_success "Or view the latest run report: file://${RESULTS_DIR}/report/index.html"
 }
 
 # Clear screen and display header

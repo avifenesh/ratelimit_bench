@@ -1,6 +1,5 @@
 import Fastify from "fastify";
-import { createRateLimiter } from "./lib/rateLimiterFactory.js";
-import { registerRoutes } from "./routes/index.js";
+import routes from "./routes/index.js";
 import { getConfig } from "./config/index.js";
 
 const config = getConfig();
@@ -10,11 +9,10 @@ const app = Fastify({
   },
 });
 
-// Create and register the appropriate rate limiter
-const rateLimiter = await createRateLimiter();
-
 // Register routes
-registerRoutes(app, { rateLimiter, config });
+await app.register(routes, {
+  config,
+});
 
 // Start the server
 const start = async () => {
