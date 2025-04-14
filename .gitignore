@@ -60,9 +60,8 @@ temp/
 
 
 # Test files
-test-results/
+results/
 
-result_*.json
 *.conf
 package-lock.json
 
