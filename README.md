@@ -7,7 +7,7 @@ A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://gi
 This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis-OSS with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible).
 The benchmark provides an objective comparison between different rate limiter implementations to help developers choose the most performant solution for their applications.
 
-Disclosure: This project is developed and maintained by a [valkey-glide](https://github.com/valkey-io/valkey-glide) maintainer.
+**Disclosure:** This project is developed and maintained by a [valkey-glide](https://github.com/valkey-io/valkey-glide) maintainer.
 To use valkey-glide you can visit npm [here](https://www.npmjs.com/package/@valkey/valkey-glide), for usage with rate-limiter-flexible refer to the [documentation](https://github.com/animir/node-rate-limiter-flexible/wiki/Valkey-Glide).
 
 ## Architecture
@@ -88,7 +88,7 @@ Available environment variables:
 
 The benchmark tests the following clients:
 
-1. **Valkey Glide** - Modern TypeScript client optimized for Valkey
+1. **Valkey Glide** -  Modern TypeScript-native client, built with a focus on stability, reliability, performance, and scalability. Designed specifically to provide superior fault tolerance and user experience.
 2. **IOValkey** - Client based on the ioredis API with Valkey performance
 3. **Redis IORedis** - Standard Redis client for Node.js
 
@@ -107,7 +107,9 @@ The benchmark suite covers multiple testing scenarios:
    - Long (120s) for sustained performance analysis
 
 3. **Concurrency Levels**:
-   - 10, 50, 100, 500, 1000 simultaneous connections
+   - 50, 100 simultaneous connections
+   - Additional run of 1000 connections in cluster mode.
+   - Additional run of 500 connections in standalone.
 
 4. **Deployment Variations**:
    - Standalone: Single Redis/Valkey instance
