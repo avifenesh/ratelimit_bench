@@ -7,9 +7,6 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_BASE_DIR="$(pwd)/results"
 RESULTS_DIR="${RESULTS_BASE_DIR}/${TIMESTAMP}"
 
-# Debug: Print directory and log file paths
-echo "RESULTS_DIR: ${RESULTS_DIR}"
-
 # Create directory structure before any logging happens
 mkdir -p "$RESULTS_DIR"
 MKDIR_EXIT_CODE=$?

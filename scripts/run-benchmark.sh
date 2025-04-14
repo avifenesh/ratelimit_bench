@@ -28,10 +28,9 @@ if [ -n "$RESULTS_DIR_HOST" ]; then
   RESULTS_DIR_HOST_OVERRIDE="$RESULTS_DIR_HOST"
 fi
 
-# Default configurations (unchanged)
-
 DEFAULT_DURATION=30
-DEFAULT_CONCURRENCY_LEVELS=(10 50 100 500 1000)
+# Remove 10 from the default list
+DEFAULT_CONCURRENCY_LEVELS=(50 100 500 1000)
 DEFAULT_REQUEST_TYPES=("light" "heavy")
 
 # Define all possible types including cluster variations explicitly
@@ -40,9 +39,12 @@ DEFAULT_RATE_LIMITER_TYPES=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cl
 
 # Parse command line arguments (unchanged)
 
-duration=${1:-$DEFAULT_DURATION}
+# Use environment variables if set, otherwise positional args, otherwise defaults
+duration=${BENCHMARK_DURATION:-${1:-$DEFAULT_DURATION}}
 concurrency_levels=(${2:-${DEFAULT_CONCURRENCY_LEVELS[@]}})
-request_types=(${3:-${DEFAULT_REQUEST_TYPES[@]}})
+request_types_str=${BENCHMARK_REQUEST_TYPES:-${3:-"${DEFAULT_REQUEST_TYPES[*]}"}}
+# Split the string into an array
+read -r -a request_types <<< "$request_types_str"
 rate_limiter_types=(${4:-${DEFAULT_RATE_LIMITER_TYPES[@]}})
 
 # --- Helper Functions ---
@@ -561,71 +563,140 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     # --- Run Benchmark Loop ---
     for req_type in "${request_types[@]}"; do
         for conn in "${concurrency_levels[@]}"; do
-            test_id="${rate_limiter_type}_${req_type}_${conn}c_${duration}s"
-            log_file_name="${RESULTS_DIR_HOST}/${test_id}.log"
-            results_file_name="${RESULTS_DIR_HOST}/${test_id}.json"
-            log "--- Running test: $test_id ---"
-            log "Concurrency: $conn, Request Type: $req_type, Duration: ${duration}s"
-
-            full_target_url="http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}/${req_type}"
-            log "Target URL for loadtest: $full_target_url"
-
-            loadtest_env_vars=(
-                -e "TARGET_URL=${full_target_url}"
-                -e "DURATION=${duration}"
-                -e "CONNECTIONS=${conn}"
-                -e "REQUEST_TYPE=${req_type}"
-                -e "OUTPUT_FILE=/app/results/${test_id}.json"
-                -e "RATE_LIMITER_TYPE=${rate_limiter_type}"
-            )
-
-            log "Starting warmup phase (10s) for test: $test_id..."
-            warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup"
-            
-            warmup_env_vars=("${loadtest_env_vars[@]}")
-            for i in "${!warmup_env_vars[@]}"; do
-                if [[ ${warmup_env_vars[$i]} == -e\ DURATION* ]]; then
-                    warmup_env_vars[$i]="-e DURATION=10"
-                    break
-                fi
-            done
-            warmup_env_vars+=(-e "WARMUP=true")
-            
-            docker run --name "$warmup_container_name" \
-                --network="$BENCHMARK_NETWORK" \
-                "${warmup_env_vars[@]}" \
-                "$LOADTEST_IMAGE_TAG" > /dev/null 2>&1 || true
-                
-            docker rm "$warmup_container_name" > /dev/null 2>&1 || true
-            log "Warmup phase completed. Starting actual benchmark..."
-            
-            log "Starting loadtest container ($LOADTEST_IMAGE_TAG)..."
-            docker run --name "$LOADTEST_CONTAINER_NAME" \
-                --network="$BENCHMARK_NETWORK" \
-                -v "${RESULTS_DIR_HOST}:/app/results" \
-                "${loadtest_env_vars[@]}" \
-                "$LOADTEST_IMAGE_TAG"
-
-            exit_code=$?
-            if [ $exit_code -ne 0 ]; then
-                log "ERROR: Loadtest container failed with exit code $exit_code."
-                log "Loadtest logs:"
-                docker logs "$LOADTEST_CONTAINER_NAME" || true
-            else
-                log "Loadtest completed successfully for $test_id."
-                if [ -f "$results_file_name" ]; then
-                    log "Results saved to $results_file_name"
-                else
-                    log "WARNING: Results file $results_file_name not found after loadtest."
-                fi
+            if [[ "$use_cluster" == "false" && "$conn" -eq 1000 ]]; then
+                log "Skipping concurrency level $conn for standalone mode."
+                continue
+            fi
+            if [[ "$use_cluster" == "true" && "$conn" -eq 500 ]]; then
+                log "Skipping concurrency level $conn for cluster mode."
+                continue
             fi
 
-            docker rm "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+            # --- Add loop for multiple runs ---
+            for run_num in {1..3}; do
+                # --- Calculate dynamic duration ---
+                current_duration=$duration # Start with base duration
+                if [[ "$conn" -le 100 ]]; then
+                    current_duration=120 # 2 minutes for 50, 100 concurrency
+                elif [[ "$conn" -ge 500 ]]; then
+                    current_duration=180 # 3 minutes for 500, 1000 concurrency
+                fi
 
-            log "--- Test finished: $test_id ---"
-            sleep 5
-        done
-    done
+                if [[ "$req_type" == "heavy" ]]; then
+                    current_duration=$((current_duration + 30)) # Add 30s for heavy requests
+                fi
+                # --- End dynamic duration calculation ---
+
+                # Create test_id with actual duration that will be used
+                test_id="${rate_limiter_type}_${req_type}_${conn}c_${current_duration}s_run${run_num}" # Add run number and actual duration to ID
+                # Define separate names for JSON results and container logs
+                json_results_file="${RESULTS_DIR_HOST}/${test_id}.json"
+                container_log_file="${RESULTS_DIR_HOST}/${test_id}.log"
+
+                log "--- Running test: $test_id (Run ${run_num}/3) ---" # Update log message
+                log "Concurrency: $conn, Request Type: $req_type, Actual Duration: ${current_duration}s (Warmup: ${WARMUP_DURATION}s)" # Log actual duration
+
+                full_target_url="http://${SERVER_CONTAINER_NAME}:${DEFAULT_SERVER_PORT}/${req_type}"
+                log "Target URL for loadtest: $full_target_url"
+
+                # Use current_duration for the actual test run
+                loadtest_env_vars=(
+                    -e "TARGET_URL=${full_target_url}"
+                    -e "DURATION=${current_duration}" # Use calculated duration
+                    -e "CONNECTIONS=${conn}"
+                    -e "REQUEST_TYPE=${req_type}"
+                    -e "OUTPUT_FILE=/app/results/${test_id}.json" # Keep internal container path consistent
+                    -e "RATE_LIMITER_TYPE=${rate_limiter_type}"
+                )
+
+                # --- Warmup Phase ---
+                if [[ "$WARMUP_DURATION" -gt 0 ]]; then
+                    # Use WARMUP_DURATION for the warmup run
+                    warmup_env_vars=("${loadtest_env_vars[@]}") # Copy base vars
+                    # Find and replace DURATION for warmup
+                    duration_found=false
+                    for i in "${!warmup_env_vars[@]}"; do
+                        # Check if the current element is "-e" and the next element starts with "DURATION="
+                        if [[ "${warmup_env_vars[$i]}" == "-e" && $i -lt $((${#warmup_env_vars[@]} - 1)) && "${warmup_env_vars[$((i+1))]}" == DURATION=* ]]; then
+                            warmup_env_vars[$((i+1))]="DURATION=${WARMUP_DURATION}" # Update the value part only
+                            duration_found=true
+                            break
+                        fi
+                    done
+                    # If DURATION wasn't in the original array (shouldn't happen, but safety check)
+                    if ! $duration_found; then
+                         # Add as separate elements if not found
+                         warmup_env_vars+=("-e" "DURATION=${WARMUP_DURATION}")
+                    fi
+                    warmup_env_vars+=("-e" "WARMUP=true") # Mark as warmup
+
+                    log "Starting warmup phase (${WARMUP_DURATION}s) for test: $test_id..." # Use constant WARMUP_DURATION
+                    warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" # Unique name per run
+
+                    # Ensure expansion treats each element as a separate argument
+                    docker run --name "$warmup_container_name" \
+                        --network="$BENCHMARK_NETWORK" \
+                        "${warmup_env_vars[@]}" \
+                        "$LOADTEST_IMAGE_TAG" > /dev/null 2>&1
+
+                    warmup_exit_code=$?
+                    if [ $warmup_exit_code -ne 0 ]; then
+                        log "ERROR: Warmup container failed with exit code $warmup_exit_code."
+                        docker logs "$warmup_container_name" 2>/dev/null || log "Could not retrieve logs for failed warmup container."
+                        docker rm "$warmup_container_name" > /dev/null 2>&1 || true
+                        exit 1
+                    fi
+
+                    docker rm "$warmup_container_name" > /dev/null 2>&1 || true
+                    log "Warmup phase completed. Starting actual benchmark..."
+                else
+                    log "Skipping warmup phase as WARMUP_DURATION is 0."
+                fi
+                # --- End Warmup Phase ---
+
+                # --- Actual Benchmark Run ---
+                log "Starting loadtest container ($LOADTEST_IMAGE_TAG) for run $run_num..." # Use run_num
+                loadtest_container_name="${LOADTEST_CONTAINER_NAME}_run${run_num}" # Use run_num
+
+                # Ensure expansion treats each element as a separate argument
+                # Redirect stdout/stderr to the container log file
+                docker run --name "$loadtest_container_name" \
+                    --network="$BENCHMARK_NETWORK" \
+                    "${loadtest_env_vars[@]}" \
+                    "$LOADTEST_IMAGE_TAG" > "$container_log_file" 2>&1
+
+                loadtest_exit_code=$?
+
+                # Copy results from container regardless of exit code
+                # Copy the JSON file generated inside the container to the host JSON results file
+                docker cp "${loadtest_container_name}:/app/results/${test_id}.json" "$json_results_file" > /dev/null 2>&1 || log "WARNING: Could not copy results file ${test_id}.json from container ${loadtest_container_name}"
+
+                if [ $loadtest_exit_code -ne 0 ]; then
+                    log "ERROR: Loadtest container failed with exit code $loadtest_exit_code."
+                    log "Loadtest container output saved to: $container_log_file" # Log the correct log file name
+                    cat "$container_log_file" # Print the output for debugging
+                    docker rm "$loadtest_container_name" > /dev/null 2>&1 || true
+                    exit 1
+                fi
+
+                docker rm "$loadtest_container_name" > /dev/null 2>&1 || true
+                log "--- Test run $run_num completed. Results saved to $json_results_file (log: $container_log_file) ---" # Log both file names
+
+                # Cooldown between runs within the same configuration
+                if [[ "$run_num" -lt 3 ]]; then
+                    log "Cooldown period (${COOLDOWN_BETWEEN_TESTS}s) before next run..."
+                    sleep "$COOLDOWN_BETWEEN_TESTS"
+                fi
+                # --- End Actual Benchmark Run ---
+
+            done # End of the 3 runs loop
+
+            # Cooldown between different test configurations (concurrency/request type)
+            log "Cooldown period (${COOLDOWN_BETWEEN_TESTS}s) before next test configuration..."
+            sleep "$COOLDOWN_BETWEEN_TESTS"
+
+        done # End concurrency loop
+    done # End request type loop
 
     # --- Cleanup after testing a specific rate limiter type ---
     log "Stopping server container..."
