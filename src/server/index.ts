@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import routes from "./routes/index.js";
 import { getConfig } from "./config/index.js";
-
+import { rateLimiter } from "./middleware/rateLimiter.js";
 const config = getConfig();
 const app = Fastify({
   logger: {
@@ -9,7 +9,8 @@ const app = Fastify({
   },
 });
 
-// Register routes
+app.addHook("preHandler", rateLimiter);
+
 await app.register(routes, {
   config,
 });

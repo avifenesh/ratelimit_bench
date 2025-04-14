@@ -1,9 +1,4 @@
-import {
-  FastifyInstance,
-  RouteShorthandOptions,
-  FastifyRequest,
-} from "fastify";
-import { RateLimiterAbstract, RateLimiterRes } from "rate-limiter-flexible";
+import { FastifyInstance, RouteShorthandOptions } from "fastify";
 import { createRateLimiter } from "../lib/rateLimiterFactory.js";
 import { getConfig } from "../config/index.js";
 import { performHeavyComputation } from "../lib/utils.js";
@@ -35,11 +30,9 @@ export default async function routes(
   fastify: FastifyInstance,
   options: RouteShorthandOptions
 ) {
-  let rateLimiter: RateLimiterAbstract;
-
   try {
-    rateLimiter = await createRateLimiter();
-    fastify.log.info(`Rate limiter initialized with type: ${config.mode}`);
+    await createRateLimiter();
+    fastify.log.info(`Rate limiter type: ${config.mode}`);
   } catch (error) {
     fastify.log.error("Failed to initialize rate limiter:", error);
     process.exit(1);
@@ -51,149 +44,78 @@ export default async function routes(
     return registerMetrics.metrics();
   });
 
-  const rateLimitOpts = {
-    rateLimit: {
-      max: config.rateLimiter.points,
-      timeWindow: config.rateLimiter.duration * 1000,
-      keyGenerator: (request: FastifyRequest) => request.ip,
-      addHeaders: {
-        "X-RateLimit-Limit": true,
-        "X-RateLimit-Remaining": true,
-        "X-RateLimit-Reset": true,
-        "Retry-After": true,
-      },
-      rateLimiter: rateLimiter,
-      onExceeded: (_request: FastifyRequest, key: string) => {
-        fastify.log.warn(
-          `Rate limit exceeded for key: ${key} - Incrementing rateLimitHits.`
-        );
-        rateLimitHits.inc({ rate_limiter: config.mode });
-      },
-    },
-  };
+  fastify.get("/light", options, async (_request, _reply) => {
+    const start = performance.now();
+    try {
+      rateLimitConsumptions.inc({ rate_limiter: config.mode });
 
-  fastify.get(
-    "/light",
-    { ...options, ...rateLimitOpts },
-    async (_request, _reply) => {
-      const start = performance.now();
-      try {
-        // Track consumption when not rate limited
-        rateLimitConsumptions.inc({ rate_limiter: config.mode });
+      const responseData = { message: "Light workload processed" };
 
-        const responseData = { message: "Light workload processed" };
+      const duration = (performance.now() - start) / 1000;
+      httpRequestDuration.observe(
+        {
+          method: "GET",
+          route: "/light",
+          status_code: 200,
+          rate_limiter: config.mode,
+        },
+        duration
+      );
 
-        // Record request duration
-        const duration = (performance.now() - start) / 1000;
-        httpRequestDuration.observe(
-          {
-            method: "GET",
-            route: "/light",
-            status_code: 200,
-            rate_limiter: config.mode,
-          },
-          duration
-        );
+      return responseData;
+    } catch (error) {
+      fastify.log.error("Error processing light workload:", error);
 
-        return responseData;
-      } catch (error) {
-        // Check if this is a rate limit error
-        if (error instanceof RateLimiterRes) {
-          // Rate limit was exceeded - this is handled by the rate limit plugin's onExceeded callback.
-          // We still log the duration with 429 status.
-          const duration = (performance.now() - start) / 1000;
-          httpRequestDuration.observe(
-            {
-              method: "GET",
-              route: "/light",
-              status_code: 429, // Rate limit status
-              rate_limiter: config.mode,
-            },
-            duration
-          );
+      const duration = (performance.now() - start) / 1000;
+      httpRequestDuration.observe(
+        {
+          method: "GET",
+          route: "/light",
+          status_code: 500,
+          rate_limiter: config.mode,
+        },
+        duration
+      );
 
-          throw error; // Re-throw to let Fastify handle the 429 response
-        }
-
-        // Other errors
-        fastify.log.error("Error processing light workload:", error);
-
-        const duration = (performance.now() - start) / 1000;
-        httpRequestDuration.observe(
-          {
-            method: "GET",
-            route: "/light",
-            status_code: 500,
-            rate_limiter: config.mode,
-          },
-          duration
-        );
-
-        throw error;
-      }
+      throw error;
     }
-  );
+  });
 
-  fastify.get(
-    "/heavy",
-    { ...options, ...rateLimitOpts },
-    async (_request, _reply) => {
-      const start = performance.now();
-      try {
-        // Track consumption when not rate limited
-        rateLimitConsumptions.inc({ rate_limiter: config.mode });
+  fastify.get("/heavy", options, async (_request, _reply) => {
+    const start = performance.now();
+    try {
+      rateLimitConsumptions.inc({ rate_limiter: config.mode });
 
-        performHeavyComputation(100); // Simulate heavy work
-        const responseData = { message: "Heavy workload processed" };
+      performHeavyComputation(100);
+      const responseData = { message: "Heavy workload processed" };
 
-        // Record request duration
-        const duration = (performance.now() - start) / 1000;
-        httpRequestDuration.observe(
-          {
-            method: "GET",
-            route: "/heavy",
-            status_code: 200,
-            rate_limiter: config.mode,
-          },
-          duration
-        );
+      const duration = (performance.now() - start) / 1000;
+      httpRequestDuration.observe(
+        {
+          method: "GET",
+          route: "/heavy",
+          status_code: 200,
+          rate_limiter: config.mode,
+        },
+        duration
+      );
 
-        return responseData;
-      } catch (error) {
-        // Check if this is a rate limit error
-        if (error instanceof RateLimiterRes) {
-          // Rate limit was exceeded - this is handled by the rate limit plugin's onExceeded callback.
-          // We still log the duration with 429 status.
-          const duration = (performance.now() - start) / 1000;
-          httpRequestDuration.observe(
-            {
-              method: "GET",
-              route: "/heavy",
-              status_code: 429,
-              rate_limiter: config.mode,
-            },
-            duration
-          );
+      return responseData;
+    } catch (error) {
+      fastify.log.error("Error processing heavy workload:", error);
 
-          throw error;
-        }
+      const duration = (performance.now() - start) / 1000;
+      httpRequestDuration.observe(
+        {
+          method: "GET",
+          route: "/heavy",
+          status_code: 500,
+          rate_limiter: config.mode,
+        },
+        duration
+      );
 
-        // Other errors
-        fastify.log.error("Error processing heavy workload:", error);
-
-        const duration = (performance.now() - start) / 1000;
-        httpRequestDuration.observe(
-          {
-            method: "GET",
-            route: "/heavy",
-            status_code: 500,
-            rate_limiter: config.mode,
-          },
-          duration
-        );
-
-        throw error;
-      }
+      throw error;
     }
-  );
+  });
 }

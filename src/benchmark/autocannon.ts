@@ -54,6 +54,11 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
     `Configuration: ${connections} connections, ${duration}s duration, ${requestType} workload`
   );
 
+  // Use a fixed userId for the entire benchmark run to test rate limiting
+  const userId = `user-${Math.floor(Math.random() * 1000)}`;
+  const finalUrl = `${url}?userId=${userId}`;
+  console.log(`Autocannon targeting URL: ${finalUrl}`);
+
   // Start resource monitoring
   const resourceMonitor = monitorResources();
 
@@ -66,7 +71,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
     // This returns an Instance (not a Promise)
     const instance: Instance = autocannon(
       {
-        url: `${url}/api?userId=user-${Math.floor(Math.random() * 1000)}`,
+        url: finalUrl, // Use the fixed userId URL
         connections,
         duration,
         headers: {
@@ -77,9 +82,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
             method: "GET",
           },
         ],
-        // Remove setupClient as we will use statusCodeStats
       },
-      // Callback receives results when done
       (err, results) => {
         if (err) {
           console.error("Benchmark error:", err);
@@ -94,6 +97,9 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
           // Calculate benchmark duration
           const endTime = performance.now();
           const actualDuration = (endTime - startTime) / 1000;
+
+          // Log the raw status code stats for debugging
+          console.log("Raw Status Code Stats:", results.statusCodeStats);
 
           // Calculate rate limit hits from statusCodeStats
           const rateLimitHits = results.statusCodeStats
