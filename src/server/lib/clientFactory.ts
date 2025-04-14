@@ -1,8 +1,4 @@
-/**
- * Client Factory
- * Creates appropriate Redis/Valkey clients based on configuration
- */
-
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as ioredis from "ioredis";
 import { Redis as Valkey, Cluster as ValkeyCluster } from "iovalkey";
 import { GlideClient, GlideClusterClient, Logger } from "@valkey/valkey-glide";
@@ -10,7 +6,6 @@ import { getConfig } from "../config/index.js";
 
 const config = getConfig();
 
-// Define a common client type alias
 type RateLimiterClient =
   | ioredis.Redis
   | ioredis.Cluster
@@ -19,15 +14,9 @@ type RateLimiterClient =
   | GlideClient
   | GlideClusterClient;
 
-// Singleton client instance
 let clientInstance: RateLimiterClient | null = null;
 
-/**
- * Creates an appropriate client for the selected mode
- * @returns {Promise<RateLimiterClient>} The connected client instance
- */
 export async function createClient(): Promise<RateLimiterClient> {
-  // Return existing client if available
   if (clientInstance) {
     return clientInstance;
   }
@@ -39,8 +28,6 @@ export async function createClient(): Promise<RateLimiterClient> {
         Logger.init("off");
 
         if (config.valkey.cluster) {
-          console.log("Connecting to Valkey Cluster using valkey-glide client");
-
           // Configure cluster options with optimized settings
           clientInstance = await GlideClusterClient.createClient({
             addresses:
@@ -52,10 +39,6 @@ export async function createClient(): Promise<RateLimiterClient> {
             useTLS: false,
           });
         } else {
-          console.log(
-            `Connecting to Valkey at ${config.valkey.host}:${config.valkey.port} using valkey-glide client`
-          );
-
           // Configure standalone options with optimized settings
           clientInstance = await GlideClient.createClient({
             addresses: [
@@ -72,8 +55,6 @@ export async function createClient(): Promise<RateLimiterClient> {
 
       case "iovalkey": {
         if (config.valkey.cluster) {
-          console.log("Connecting to Valkey Cluster using iovalkey client");
-
           clientInstance = new ValkeyCluster(
             config.valkey.clusterNodes?.map((node) => {
               const [host, portStr] = node.split(":");
@@ -82,10 +63,6 @@ export async function createClient(): Promise<RateLimiterClient> {
             }) || []
           );
         } else {
-          console.log(
-            `Connecting to Valkey at ${config.valkey.host}:${config.valkey.port} using iovalkey client`
-          );
-
           clientInstance = new Valkey({
             host: config.valkey.host,
             port: config.valkey.port,
@@ -96,8 +73,6 @@ export async function createClient(): Promise<RateLimiterClient> {
 
       case "ioredis": {
         if (config.redis.cluster) {
-          console.log("Connecting to Redis Cluster using ioredis");
-
           clientInstance = new ioredis.Cluster(
             config.redis.clusterNodes?.map((node) => {
               const [host, portStr] = node.split(":");
@@ -106,10 +81,6 @@ export async function createClient(): Promise<RateLimiterClient> {
             }) || []
           );
         } else {
-          console.log(
-            `Connecting to Redis at ${config.redis.host}:${config.redis.port} using ioredis`
-          );
-
           clientInstance = new ioredis.Redis({
             host: config.redis.host,
             port: config.redis.port,
@@ -119,14 +90,8 @@ export async function createClient(): Promise<RateLimiterClient> {
       }
 
       default: {
-        console.error(
-          `Unknown mode "${config.mode}", defaulting to valkey-glide standalone. Valid modes are: valkey-glide, iovalkey, ioredis`
-        );
         Logger.init("off");
 
-        console.log(
-          `Attempting to connect to ${config.valkey.host}:${config.valkey.port}`
-        );
         clientInstance = await GlideClient.createClient({
           addresses: [
             {
@@ -142,20 +107,7 @@ export async function createClient(): Promise<RateLimiterClient> {
     return clientInstance;
   } catch (error) {
     console.error("Failed to create client:", error);
-
-    console.error(`
-    Connection troubleshooting tips:
-    1. Ensure Valkey/Redis server is running at the configured address
-    2. Check firewall settings allow connections to port ${
-      config.mode.includes("valkey") ? config.valkey.port : config.redis.port
-    }
-    3. Verify Docker network configuration if running in containers
-    4. Check that the mode '${
-      config.mode
-    }' is correctly spelled in your configuration
-    `);
-
-    throw error;
+    throw error; // Re-throw the error after logging
   }
 }
 
@@ -167,28 +119,22 @@ export function getClient(): RateLimiterClient | null {
 }
 
 /**
- * Closes the client connection gracefully
+ * Closes the client connection
  */
 export async function closeClient(): Promise<void> {
-  if (!clientInstance) return;
-
-  try {
-    if (
-      clientInstance instanceof GlideClient ||
-      clientInstance instanceof GlideClusterClient
-    ) {
-      clientInstance.close();
-    } else if (
-      clientInstance instanceof ioredis.Redis ||
-      clientInstance instanceof ioredis.Cluster ||
-      clientInstance instanceof Valkey ||
-      clientInstance instanceof ValkeyCluster
-    ) {
-      await clientInstance.quit();
+  if (clientInstance) {
+    try {
+      if (typeof (clientInstance as any).close === "function") {
+        await (clientInstance as any).close();
+      } else if (typeof (clientInstance as any).quit === "function") {
+        await (clientInstance as any).quit();
+      } else if (typeof (clientInstance as any).disconnect === "function") {
+        (clientInstance as any).disconnect();
+      }
+      clientInstance = null;
+      console.log("Client connection closed.");
+    } catch (err) {
+      console.error("Error closing client connection:", err);
     }
-  } catch (err) {
-    console.error("Error closing client:", err);
-  } finally {
-    clientInstance = null;
   }
 }

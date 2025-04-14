@@ -2,8 +2,6 @@
 
 set -e
 
-# This script helps debug Docker network issues by running a single test with correct network settings
-
 echo "=== Docker Network Debug Utility ==="
 
 # Get list of networks

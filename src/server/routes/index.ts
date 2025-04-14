@@ -32,7 +32,6 @@ export default async function routes(
 ) {
   try {
     await createRateLimiter();
-    fastify.log.info(`Rate limiter type: ${config.mode}`);
   } catch (error) {
     fastify.log.error("Failed to initialize rate limiter:", error);
     process.exit(1);

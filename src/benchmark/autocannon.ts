@@ -1,7 +1,3 @@
-/**
- * Autocannon benchmark runner
- * Main entry point for running benchmarks against the API server
- */
 import autocannon, { Instance, Result } from "autocannon";
 import { performance } from "perf_hooks";
 import { writeFileSync } from "fs";
@@ -16,14 +12,12 @@ interface BenchmarkOptions {
   rateLimiterType?: string;
 }
 
-// Helper function to extract count from statusCodeStats entry
 function getStatusCodeCount(
   stat: Result["statusCodeStats"][keyof Result["statusCodeStats"]] | object
 ): number {
   if (typeof stat === "number") {
     return stat;
   }
-  // Add a more robust check for object and count property
   if (
     stat &&
     typeof stat === "object" &&
@@ -33,11 +27,9 @@ function getStatusCodeCount(
   ) {
     return stat.count;
   }
-  // Fallback for unexpected structures
   return 0;
 }
 
-// Main benchmark function
 export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
   const {
     url,
@@ -97,9 +89,6 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
           // Calculate benchmark duration
           const endTime = performance.now();
           const actualDuration = (endTime - startTime) / 1000;
-
-          // Log the raw status code stats for debugging
-          console.log("Raw Status Code Stats:", results.statusCodeStats);
 
           // Calculate rate limit hits from statusCodeStats
           const rateLimitHits = results.statusCodeStats

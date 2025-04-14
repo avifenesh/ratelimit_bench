@@ -1,8 +1,3 @@
-/**
- * Server configuration
- * Loads and validates environment variables
- */
-
 export interface Config {
   port: number;
   mode: string;

@@ -1,8 +1,3 @@
-/**
- * Resource monitoring for benchmark tests
- * Tracks CPU and memory usage during benchmarks
- * Compatible with different Node.js environments including ARM64
- */
 import { cpuUsage, memoryUsage } from "process";
 
 interface ResourceStats {
@@ -20,10 +15,6 @@ interface ResourceStats {
   };
 }
 
-/**
- * Monitors system resources (CPU and memory) during benchmark runs
- * Returns an object with methods to stop monitoring and get stats
- */
 export function monitorResources(sampleIntervalMs = 200) {
   let isRunning = true;
   const cpuSamples: number[] = [];

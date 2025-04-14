@@ -1,13 +1,7 @@
-/**
- * Results collection and processing for benchmark tests
- */
 import { Result } from "autocannon";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
-/**
- * Benchmark result interface with detailed metrics
- */
 export interface BenchmarkResult {
   testConfig: {
     url: string;
@@ -49,9 +43,6 @@ export interface BenchmarkResult {
   };
 }
 
-/**
- * Process autocannon results into a standardized format
- */
 export function processResults(
   autocannonResult: Result,
   options: {
