@@ -7,8 +7,8 @@ A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://gi
 This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis-OSS with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible).
 The benchmark provides an objective comparison between different rate limiter implementations to help developers choose the most performant solution for their applications.
 
-**Disclosure:** This project is developed and maintained by a [valkey-glide](https://github.com/valkey-io/valkey-glide) maintainer.
-To use valkey-glide you can visit npm [here](https://www.npmjs.com/package/@valkey/valkey-glide), for usage with rate-limiter-flexible refer to the [documentation](https://github.com/animir/node-rate-limiter-flexible/wiki/Valkey-Glide).
+**Disclosure:** This project is developed and maintained by a [valkey-glide](https://github.com/valkey-io/valkey-glide) maintainer.  
+To use valkey-glide you can visit [npm](https://www.npmjs.com/package/@valkey/valkey-glide), for usage with rate-limiter-flexible refer to the [documentation](https://github.com/animir/node-rate-limiter-flexible/wiki/Valkey-Glide).
 
 ## Architecture
 
