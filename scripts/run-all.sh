@@ -63,7 +63,7 @@ setup_environment() {
   
   # Ensure scripts are executable
   chmod +x ./scripts/run-benchmark.sh
-  chmod +x ./scripts/generate-report.sh
+  chmod +x ./scripts/generate_report.py
   
   # Create symlink for latest results
   rm -f "${RESULTS_BASE_DIR}/latest"
@@ -207,13 +207,13 @@ run_benchmarks() {
 
 generate_final_report() {
   log "Generating comprehensive report..."
-  
-  # Generate reports for each benchmark
-  if [ -f "./scripts/generate-report.sh" ]; then
-    log "Generating report for benchmark results..."
-    ./scripts/generate-report.sh "$RESULTS_DIR"
+
+  # Generate reports for each benchmark using the Python script
+  if [ -f "./scripts/generate_report.py" ]; then
+    log "Generating report for benchmark results using Python script..."
+    python3 ./scripts/generate_report.py "$RESULTS_DIR"
   fi
-  
+
   # Create index page that links to all benchmark results
   cat > "${RESULTS_BASE_DIR}/index.html" << EOF
 <!DOCTYPE html>

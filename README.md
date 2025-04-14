@@ -113,40 +113,96 @@ The benchmark uses a layered architecture:
 ## Project Structure
 
 ```
-ratelimit_bench/
-├── src/                    # Source TypeScript files
-│   ├── benchmark/          # Autocannon benchmark tools with resource monitoring
-│   ├── loadtest/           # Load testing utilities
-│   └── server/             # Server implementation with rate limiters
-│       ├── config/         # Server configuration
-│       ├── lib/            # Client and rate limiter factories
-│       ├── middleware/     # Fastify middleware
-│       └── routes/         # API endpoints
-├── scripts/                # Benchmark orchestration scripts
-├── docker-compose.yml                  # Main Docker setup for standalone instances
-├── docker-compose-redis-cluster.yml    # Redis cluster configuration
-└── docker-compose-valkey-cluster.yml   # Valkey cluster configuration
+/home/ubuntu/ratelimit_bench
+├── docker/             # Docker volume mounts
+├── grafana/            # Grafana provisioning and dashboards
+├── results/            # Benchmark results (timestamped directories)
+│   ├── YYYYMMDD_HHMMSS/
+│   │   ├── report/     # Generated HTML report and CSV summary
+│   │   │   ├── index.html
+│   │   │   └── summary.csv
+│   │   ├── *.json      # Raw autocannon results
+│   │   └── README.md   # Run-specific details
+│   └── latest -> YYYYMMDD_HHMMSS/ # Symlink to the latest run
+├── scripts/            # Bash and Python scripts
+│   ├── run-all.sh      # Main orchestration script
+│   ├── run-benchmark.sh # Individual benchmark runner
+│   └── generate_report.py # Python report generator
+├── src/                # Source code (TypeScript)
+│   ├── benchmark/      # Autocannon and monitoring logic
+│   ├── server/         # Fastify server, routes, rate limiter logic
+│   └── types/          # Shared TypeScript types
+├── tests/              # Unit and integration tests
+├── .env.example        # Example environment variables
+├── .eslintrc.js        # ESLint configuration
+├── .gitignore          # Git ignore rules
+├── docker-compose.yml  # Base Docker Compose file (standalone)
+├── docker-compose-redis-cluster.yml # Docker Compose for Redis Cluster
+├── docker-compose-valkey-cluster.yml # Docker Compose for Valkey Cluster
+├── Dockerfile.server   # Dockerfile for the Fastify server
+├── Dockerfile.loadtest # Dockerfile for the Autocannon load tester
+├── package.json
+├── README.md           # This file
+├── requirements.txt    # Python dependencies for report generation
+├── tsconfig.json       # TypeScript configuration
+└── valkey.conf         # Valkey configuration file
 ```
 
-## Results
+## Running the Benchmarks
 
-After running benchmarks, results are stored in the `results/` directory. Each test run creates a timestamped folder containing:
+1.  **Build Docker Images:**
+    ```bash
+    docker build -t benchmark-server:latest -f Dockerfile.server .
+    docker build -t benchmark-loadtest:latest -f Dockerfile.loadtest .
+    ```
 
-- Individual test results as JSON files
-- Server logs for each test
-- A README.md summarizing the test configuration
-- Summary charts and comparisons (if report generation was run)
+2.  **Run the Full Suite:**
+    The `run-all.sh` script orchestrates the entire benchmark process, including setting up the environment, starting containers, running tests for all configurations, and generating the final report.
+    ```bash
+    ./scripts/run-all.sh
+    ```
+    This will create a timestamped results directory (e.g., `results/YYYYMMDD_HHMMSS/`) and a `results/latest` symlink pointing to it.
 
-## Generate Reports
+3.  **Run Individual Benchmarks (Optional):**
+    You can use `run-benchmark.sh` for more granular control.
+    ```bash
+    # Example: Run only valkey-glide, light workload, 50 connections, 60s duration
+    ./scripts/run-benchmark.sh 60 "50" "light" "valkey-glide"
+    ```
 
-After running benchmarks, you can generate a comprehensive report:
+## Generating Reports
 
-```bash
-npm run generate-report
-```
+The benchmark results are processed into an HTML report with charts and a summary CSV file.
 
-This will create visualizations comparing the performance of different implementations.
+1.  **Install Python Dependencies:**
+    The report generation script requires `pandas` and `matplotlib`. Install them using `uv` (preferably within a virtual environment):
+    ```bash
+    # Activate your virtual environment first (e.g., source .venv/bin/activate)
+    uv pip install -r requirements.txt
+    ```
 
-## License
+2.  **Generate Report:**
+    The `run-all.sh` script automatically generates the report after the benchmarks complete. To generate it manually for a specific results directory:
+    ```bash
+    # Make sure your virtual environment is active or use uv run
+    python scripts/generate_report.py ./results/YYYYMMDD_HHMMSS/
+    # Or using uv run:
+    # uv run -- python scripts/generate_report.py ./results/YYYYMMDD_HHMMSS/
+    ```
+    The report ( `index.html` and `summary.csv`) will be created inside the specified results directory within a `report/` subdirectory (e.g., `results/YYYYMMDD_HHMMSS/report/`).
 
-MIT
+## Viewing Results
+
+-   The main `results/index.html` provides links to all historical benchmark runs.
+-   Each run's detailed report is available at `results/YYYYMMDD_HHMMSS/report/index.html`.
+-   The `run-all.sh` script offers to start a simple HTTP server at the end for easy viewing at `http://localhost:8080`.
+
+## Monitoring
+
+-   **Prometheus:** Access at `http://localhost:9090`
+-   **Grafana:** Access at `http://localhost:3000` (Default user/pass: admin/admin)
+    -   Import dashboards from the `grafana/dashboards` directory.
+
+## Contributing
+
+...
