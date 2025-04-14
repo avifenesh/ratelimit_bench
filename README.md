@@ -125,6 +125,23 @@ The benchmark collects the following performance metrics:
 - **System Resources**: CPU and memory usage during benchmarks
 - **Error Rates**: Percentage of failed requests
 
+## Benchmark Methodology and Results Processing
+
+To ensure statistical significance and account for system variability, each benchmark configuration is run multiple times (typically three iterations). This approach minimizes the impact of outliers and transient system behavior.
+
+The data processing methodology follows these steps:
+
+1. **Multiple Iterations**: Each benchmark configuration (client/workload/concurrency combination) is executed three consecutive times with identical parameters.
+2. **Median Selection**: For each performance metric, the median value from all runs is selected for the final report, providing a more stable representation than a single run or a mean value that could be skewed by outliers.
+3. **Consistency Verification**: Standard deviation is calculated across runs to ensure test stability. High variance may indicate unstable test conditions and is flagged in the report.
+4. **Comparative Analysis**: Percentage differences between implementations are calculated to highlight relative performance characteristics.
+
+This methodology ensures the benchmark results are:
+
+- **Reproducible**: Multiple runs increase confidence in the measurements
+- **Representative**: Median values avoid skew from outliers
+- **Comparable**: Consistent methodology across all client implementations
+
 ## Results Structure
 
 Benchmark results are organized by timestamp in the `results/` directory:

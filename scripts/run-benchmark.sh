@@ -657,7 +657,10 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 # --- Actual Benchmark Run ---
                 log "Starting loadtest container ($LOADTEST_IMAGE_TAG) for run $run_num..." # Use run_num
                 loadtest_container_name="${LOADTEST_CONTAINER_NAME}_run${run_num}" # Use run_num
-
+                
+                # Clean up any existing container with this name from previous benchmark runs
+                docker rm -f "$loadtest_container_name" > /dev/null 2>&1 || true
+                
                 # Ensure expansion treats each element as a separate argument
                 # Redirect stdout/stderr to the container log file
                 docker run --name "$loadtest_container_name" \
