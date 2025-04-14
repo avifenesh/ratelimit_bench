@@ -51,6 +51,10 @@ log_error() {
 setup_environment() {
   log "Setting up environment..."
   
+  # Install dependencies
+  log "Installing npm dependencies..."
+  npm install
+  
   # Create Valkey config file if it doesn't exist
   if [ ! -f "./valkey.conf" ]; then
     echo "# Valkey configuration for benchmark" > ./valkey.conf
@@ -77,19 +81,29 @@ build_application() {
 start_containers() {
   log "Starting Docker containers..."
 
+  # Clean the project before starting containers
+  log "Cleaning the project..."
+  npm run clean
+  
   # Stop any running containers first
   log "Stopping any existing containers..."
   docker-compose down -v &>/dev/null || true
   
   # Copy built files to Docker volumes if needed
   log "Copying built application code to Docker volume..."
+  if [ ! -d "./dist" ]; then
+    log "No built code found. Attempting to build the application again..."
+    npm run build
+  fi
+  
   if [ -d "./dist" ]; then
     mkdir -p ./docker/app
     cp -r ./dist ./docker/app/
     cp package.json ./docker/app/
     log "Application code copied to Docker volume"
   else
-    log_error "No built code found. Make sure the build step completed successfully."
+    log_error "No built code found even after rebuilding. Check for build errors."
+    exit 1
   fi
   
   # Create the benchmark network explicitly
