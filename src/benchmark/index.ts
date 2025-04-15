@@ -1,7 +1,7 @@
 import { runBenchmark } from "./autocannon.js";
 
 // Get benchmark configuration from environment variables
-const targetUrl = process.env.TARGET_URL || "http://localhost:3000";
+const targetUrl = process.env.TARGET_URL || "http://localhost:3001";
 const duration = parseInt(process.env.DURATION || "30", 10);
 const connections = parseInt(process.env.CONNECTIONS || "10", 10);
 const requestType = (process.env.REQUEST_TYPE || "light") as "light" | "heavy";

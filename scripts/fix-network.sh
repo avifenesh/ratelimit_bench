@@ -34,7 +34,7 @@ sleep 5
 echo "Starting server container..."
 docker run -d --name benchmark-server \
     --network $network_name \
-    -p 3000:3000 \
+    -p 3001:3001 \
     -e "MODE=valkey-glide" \
     -e "VALKEY_HOST=benchmark-valkey" \
     -e "VALKEY_PORT=6379" \
@@ -53,7 +53,7 @@ docker run --rm \
     --name benchmark-loadtest \
     --network $network_name \
     -e "SERVER_HOST=benchmark-server" \
-    -e "SERVER_PORT=3000" \
+    -e "SERVER_PORT=3001" \
     -e "DURATION=5" \
     -e "CONCURRENCY=10" \
     -e "SCENARIO=light" \
