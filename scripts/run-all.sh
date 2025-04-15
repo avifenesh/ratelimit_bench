@@ -181,22 +181,38 @@ run_benchmarks() {
   if [ "$RUN_LONG_BENCHMARKS" = "true" ]; then
     # For full benchmark, run with multiple concurrency levels and longer duration
     CONCURRENCY_LEVELS="10 50 100 500 1000"
-    REQUEST_TYPES="light heavy"
     
-    # Run light workload benchmark with short duration
-    log "Running light workload benchmark (short duration)..."
-    DURATION=30 $BENCHMARK_SCRIPT
+    # Set workload types based on user selection
+    WORKLOAD_TYPES=""
+    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
+      WORKLOAD_TYPES="${WORKLOAD_TYPES}light "
+    fi
+    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
+      WORKLOAD_TYPES="${WORKLOAD_TYPES}heavy"
+    fi
+    REQUEST_TYPES="$WORKLOAD_TYPES"
     
-    # Run heavy workload benchmark with short duration and reduced complexity
-    log "Running heavy workload benchmark (short duration)..."
-    DURATION=30 COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
+    # Run light workload benchmark if selected
+    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
+      # Run light workload with short duration
+      log "Running light workload benchmark (short duration)..."
+      DURATION=30 BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
+      
+      # Run light workload with long duration
+      log "Running light workload benchmark (long duration)..."
+      DURATION=120 BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
+    fi
     
-    # Run longer benchmarks
-    log "Running light workload benchmark (long duration)..."
-    DURATION=120 SCENARIO=light $BENCHMARK_SCRIPT
-    
-    log "Running heavy workload benchmark (long duration with reduced complexity)..."
-    DURATION=120 COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
+    # Run heavy workload benchmark if selected
+    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
+      # Run heavy workload with short duration and reduced complexity
+      log "Running heavy workload benchmark (short duration)..."
+      DURATION=30 COMPUTATION_COMPLEXITY=5 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
+      
+      # Run heavy workload with long duration and reduced complexity
+      log "Running heavy workload benchmark (long duration with reduced complexity)..."
+      DURATION=120 COMPUTATION_COMPLEXITY=5 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
+    fi
   else
     # For quick benchmark, run only 30-second tests with 50 connections
     log "Running quick benchmarks (30s only)..."
@@ -208,16 +224,29 @@ run_benchmarks() {
     export CONCURRENCY=50
     
     # Only run one test for each implementation (no long tests)
-    export REQUEST_TYPES="light heavy"
     export SKIP_LONG_TESTS=true
     
-    # Run light workload benchmark with short duration
-    log "Running light workload benchmark (30s, 50 connections)..."
-    SCENARIO=light $BENCHMARK_SCRIPT
+    # Set workload types based on user selection
+    WORKLOAD_TYPES=""
+    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
+      WORKLOAD_TYPES="${WORKLOAD_TYPES}light "
+    fi
+    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
+      WORKLOAD_TYPES="${WORKLOAD_TYPES}heavy"
+    fi
+    export REQUEST_TYPES="$WORKLOAD_TYPES"
     
-    # Run heavy workload with reduced complexity
-    log "Running heavy workload benchmark (30s, 50 connections)..."
-    COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
+    # Run light workload benchmark if selected
+    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
+      log "Running light workload benchmark (30s, 50 connections)..."
+      BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
+    fi
+    
+    # Run heavy workload benchmark if selected
+    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
+      log "Running heavy workload benchmark (30s, 50 connections)..."
+      COMPUTATION_COMPLEXITY=10 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
+    fi
   fi
   
   # Unset environment variables
@@ -328,10 +357,18 @@ echo "Options:"
 echo "  1. Quick Benchmark (30s runs)"
 echo "  2. Full Benchmark (30s + 120s runs)"
 echo
-read -p "Select option (1/2): " -n 1 -r
+echo "Workload Options:"
+echo "  a. All workloads (default)"
+echo "  l. Light workload only"
+echo "  h. Heavy workload only"
+echo
+read -p "Select benchmark option (1/2): " -n 1 benchmark_option
+echo
+read -p "Select workload type (a/l/h): " -n 1 workload_type
 echo
 
-case $REPLY in
+# Set benchmark type
+case $benchmark_option in
   1)
     RUN_LONG_BENCHMARKS=false
     ;;
@@ -339,7 +376,27 @@ case $REPLY in
     RUN_LONG_BENCHMARKS=true
     ;;
   *)
-    log_error "Invalid selection. Exiting."
+    log_error "Invalid benchmark selection. Exiting."
+    exit 1
+    ;;
+esac
+
+# Set workload type
+case $workload_type in
+  a|A|"") # Default to all if empty
+    RUN_LIGHT_WORKLOAD=true
+    RUN_HEAVY_WORKLOAD=true
+    ;;
+  l|L)
+    RUN_LIGHT_WORKLOAD=true
+    RUN_HEAVY_WORKLOAD=false
+    ;;
+  h|H)
+    RUN_LIGHT_WORKLOAD=false
+    RUN_HEAVY_WORKLOAD=true
+    ;;
+  *)
+    log_error "Invalid workload selection. Exiting."
     exit 1
     ;;
 esac

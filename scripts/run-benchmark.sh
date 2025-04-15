@@ -503,6 +503,16 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
     docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
 
+    # Pass COMPUTATION_COMPLEXITY environment variable if it exists
+    if [[ -n "$COMPUTATION_COMPLEXITY" ]]; then
+        server_env_vars+=(-e "COMPUTATION_COMPLEXITY=$COMPUTATION_COMPLEXITY")
+        log "Setting COMPUTATION_COMPLEXITY=$COMPUTATION_COMPLEXITY"
+    else
+        # Set a reasonable default for heavy workloads
+        server_env_vars+=(-e "COMPUTATION_COMPLEXITY=10")
+        log "Setting default COMPUTATION_COMPLEXITY=10"
+    fi
+
     docker run -d --name "$SERVER_CONTAINER_NAME" \
         --network="$BENCHMARK_NETWORK" \
         -p "${DEFAULT_SERVER_PORT}:${DEFAULT_SERVER_PORT}" \
