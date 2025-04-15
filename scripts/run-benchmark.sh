@@ -8,6 +8,11 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_DIR_HOST="$(pwd)/results/${TIMESTAMP}"
 LOG_FILE="${RESULTS_DIR_HOST}/benchmark.log"
 README_FILE="${RESULTS_DIR_HOST}/README.md"
+
+# Ensure results directory exists immediately
+mkdir -p "$RESULTS_DIR_HOST"
+touch "$LOG_FILE"
+
 SERVER_IMAGE_TAG="benchmark-server:latest"
 LOADTEST_IMAGE_TAG="benchmark-loadtest:latest"
 SERVER_CONTAINER_NAME="running-benchmark-server"
@@ -174,6 +179,14 @@ verify_database_connection() {
         log "WARNING: Could not detect any $db_tech container!"
       fi
     }
+
+# --- Ensure Thorough Cleanup Before Starting ---
+log "Performing thorough cleanup before starting benchmark..."
+# Clean up any containers with benchmark names
+docker ps -a --filter "name=running-benchmark-" --format "{{.Names}}" | xargs -r docker rm -f || true
+docker ps -a --filter "name=benchmark-loadtest" --format "{{.Names}}" | xargs -r docker rm -f || true
+
+log "Benchmark cleanup completed"
 
 # --- Initialization ---
 
@@ -400,9 +413,9 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     fi
 
     # --- Configure Server Environment Variables ---
-    server_env_vars=()
-    server_env_vars+=(-e "NODE_ENV=production")
-    server_env_vars+=(-e "PORT=${DEFAULT_SERVER_PORT}")
+    # Initialize as empty array properly
+    declare -a server_env_vars
+    server_env_vars=(-e "NODE_ENV=production" -e "PORT=${DEFAULT_SERVER_PORT}")
 
     # Special handling for different client types
     case "$actual_rate_limiter_type" in
@@ -656,18 +669,32 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                     warmup_env_vars+=("-e" "WARMUP=true") # Mark as warmup
 
                     log "Starting warmup phase (${WARMUP_DURATION}s) for test: $test_id..." # Use constant WARMUP_DURATION
-                    warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" # Unique name per run
+                    # Use timestamp to ensure unique container name
+                    timestamp=$(date +%s)
+                    warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup_${run_num}_${timestamp}" # Unique name per run
+                    
+                    # Ensure any existing container with similar name is removed first
+                    docker rm -f "${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" > /dev/null 2>&1 || true
+
+                    # Print the exact docker run command for debugging
+                    log "Running warmup with command: docker run --name $warmup_container_name --network=$BENCHMARK_NETWORK ${warmup_env_vars[*]} $LOADTEST_IMAGE_TAG"
 
                     # Ensure expansion treats each element as a separate argument
                     docker run --name "$warmup_container_name" \
                         --network="$BENCHMARK_NETWORK" \
                         "${warmup_env_vars[@]}" \
-                        "$LOADTEST_IMAGE_TAG" > /dev/null 2>&1
+                        "$LOADTEST_IMAGE_TAG" > "${RESULTS_DIR_HOST}/${test_id}_warmup.log" 2>&1
 
                     warmup_exit_code=$?
                     if [ $warmup_exit_code -ne 0 ]; then
                         log "ERROR: Warmup container failed with exit code $warmup_exit_code."
-                        docker logs "$warmup_container_name" 2>/dev/null || log "Could not retrieve logs for failed warmup container."
+                        log "=== Warmup container logs ==="
+                        docker logs "$warmup_container_name" 2>&1 | tee -a "$LOG_FILE" || log "Could not retrieve logs for failed warmup container."
+                        log "=== End warmup container logs ==="
+                        log "Network diagnostic information:"
+                        docker network inspect "$BENCHMARK_NETWORK" | grep -A 10 "Containers" | tee -a "$LOG_FILE"
+                        log "Testing connectivity from warmup container to server:"
+                        docker exec -i "$warmup_container_name" ping -c 1 "$SERVER_CONTAINER_NAME" || log "Could not ping server from warmup container"
                         docker rm "$warmup_container_name" > /dev/null 2>&1 || true
                         exit 1
                     fi
