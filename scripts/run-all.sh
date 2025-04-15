@@ -173,31 +173,51 @@ run_benchmarks() {
   # Ensure benchmark script is executable
   chmod +x "$BENCHMARK_SCRIPT"
   
-  # Define common parameters
-  CONCURRENCY_LEVELS="10 50 100 500 1000"
-  REQUEST_TYPES="light heavy"
-  RATE_LIMITER_TYPES="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
-  
   # Set environment variables to tell run-benchmark.sh that containers are already running
   export CONTAINERS_ALREADY_RUNNING="true"
   export BENCHMARK_NETWORK="benchmark-network"
   export RESULTS_DIR_HOST="$RESULTS_DIR"
   
-  # Run light workload benchmark with short duration
-  log "Running light workload benchmark (short duration)..."
-  DURATION=30 $BENCHMARK_SCRIPT
-  
-  # Run heavy workload benchmark with short duration
-  log "Running heavy workload benchmark (short duration)..."
-  DURATION=30 SCENARIO=heavy $BENCHMARK_SCRIPT
-  
-  # Run longer benchmarks if requested
   if [ "$RUN_LONG_BENCHMARKS" = "true" ]; then
+    # For full benchmark, run with multiple concurrency levels and longer duration
+    CONCURRENCY_LEVELS="10 50 100 500 1000"
+    REQUEST_TYPES="light heavy"
+    
+    # Run light workload benchmark with short duration
+    log "Running light workload benchmark (short duration)..."
+    DURATION=30 $BENCHMARK_SCRIPT
+    
+    # Run heavy workload benchmark with short duration and reduced complexity
+    log "Running heavy workload benchmark (short duration)..."
+    DURATION=30 COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
+    
+    # Run longer benchmarks
     log "Running light workload benchmark (long duration)..."
     DURATION=120 SCENARIO=light $BENCHMARK_SCRIPT
     
-    log "Running heavy workload benchmark (long duration)..."
-    DURATION=120 SCENARIO=heavy $BENCHMARK_SCRIPT
+    log "Running heavy workload benchmark (long duration with reduced complexity)..."
+    DURATION=120 COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
+  else
+    # For quick benchmark, run only 30-second tests with 50 connections
+    log "Running quick benchmarks (30s only)..."
+    
+    # Force 30-second duration for all tests
+    export DURATION=30
+    
+    # Force single concurrency level
+    export CONCURRENCY=50
+    
+    # Only run one test for each implementation (no long tests)
+    export REQUEST_TYPES="light heavy"
+    export SKIP_LONG_TESTS=true
+    
+    # Run light workload benchmark with short duration
+    log "Running light workload benchmark (30s, 50 connections)..."
+    SCENARIO=light $BENCHMARK_SCRIPT
+    
+    # Run heavy workload with reduced complexity
+    log "Running heavy workload benchmark (30s, 50 connections)..."
+    COMPLEXITY=10 SCENARIO=heavy $BENCHMARK_SCRIPT
   fi
   
   # Unset environment variables
@@ -217,7 +237,7 @@ generate_final_report() {
     python3 ./scripts/generate_report.py "$RESULTS_DIR"
   fi
 
-  # Create index page that links to all benchmark results
+  # Create a simplified index page that links to all benchmark results
   cat > "${RESULTS_BASE_DIR}/index.html" << EOF
 <!DOCTYPE html>
 <html>
@@ -225,24 +245,14 @@ generate_final_report() {
   <title>Valkey vs Redis Rate Limiter Benchmark Results</title>
   <style>
     body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-    .highlight { background-color: #f0f7ff; border-left: 4px solid #0366d6; padding: 10px; margin: 20px 0; }
     h1, h2 { color: #333; }
     table { border-collapse: collapse; width: 100%; margin: 20px 0; }
     th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
     th { background-color: #f2f2f2; }
-    tr:nth-child(even) { background-color: #f9f9f9; }
-    .latest { font-weight: bold; color: #0366d6; }
   </style>
 </head>
 <body>
   <h1>Valkey vs Redis Rate Limiter Benchmark Results</h1>
-  
-  <div class="highlight">
-    <h3>Performance Summary</h3>
-    <p>This benchmark compares the performance of rate limiting implementations using Valkey and Redis,
-       with a focus on highlighting Valkey's performance advantages, especially the Glide client.</p>
-  </div>
-  
   <h2>Benchmark Runs</h2>
   <table>
     <tr>
@@ -257,16 +267,9 @@ EOF
     run_id=$(basename "$dir")
     if [ "$run_id" != "latest" ]; then
       date_formatted=$(echo "$run_id" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)_\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\1-\2-\3 \4:\5:\6/')
-      
-      # Check if this is the latest run
-      latest_class=""
-      if [ "$run_id" = "$TIMESTAMP" ]; then
-        latest_class="latest"
-      fi
-      
       # Add entry to the HTML table
       cat >> "${RESULTS_BASE_DIR}/index.html" << EOF
-    <tr class="$latest_class">
+    <tr>
       <td>$date_formatted</td>
       <td>$run_id</td>
       <td><a href="./$run_id/report/index.html">View Results</a></td>
@@ -278,13 +281,6 @@ EOF
   # Close the HTML table and document
   cat >> "${RESULTS_BASE_DIR}/index.html" << EOF
   </table>
-  
-  <div class="highlight">
-    <h3>Key Findings</h3>
-    <p>Valkey Glide consistently outperforms other implementations, especially in high-concurrency scenarios.</p>
-    <p>Valkey's cluster configuration provides better scalability compared to Redis cluster.</p>
-    <p>For rate-limiting workloads, Valkey shows significantly lower latency under heavy load conditions.</p>
-  </div>
 </body>
 </html>
 EOF

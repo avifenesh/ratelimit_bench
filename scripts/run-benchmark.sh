@@ -572,18 +572,33 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 continue
             fi
 
+            # Determine how many runs to perform
+            # If this is a quick benchmark, only do 1 run, otherwise do 3
+            max_runs=3
+            if [[ "$SKIP_LONG_TESTS" == "true" ]]; then
+                max_runs=1
+                log "Quick benchmark mode: Running each test configuration once only"
+            fi
+            
             # --- Add loop for multiple runs ---
-            for run_num in {1..3}; do
+            for run_num in $(seq 1 $max_runs); do
                 # --- Calculate dynamic duration ---
                 current_duration=$duration # Start with base duration
-                if [[ "$conn" -le 100 ]]; then
-                    current_duration=120 # 2 minutes for 50, 100 concurrency
-                elif [[ "$conn" -ge 500 ]]; then
-                    current_duration=180 # 3 minutes for 500, 1000 concurrency
-                fi
+                
+                # Only override duration if SKIP_LONG_TESTS is not set
+                if [[ "$SKIP_LONG_TESTS" != "true" ]]; then
+                    if [[ "$conn" -le 100 ]]; then
+                        current_duration=120 # 2 minutes for 50, 100 concurrency
+                    elif [[ "$conn" -ge 500 ]]; then
+                        current_duration=180 # 3 minutes for 500, 1000 concurrency
+                    fi
 
-                if [[ "$req_type" == "heavy" ]]; then
-                    current_duration=$((current_duration + 30)) # Add 30s for heavy requests
+                    if [[ "$req_type" == "heavy" ]]; then
+                        current_duration=$((current_duration + 30)) # Add 30s for heavy requests
+                    fi
+                else
+                    # Force 30s duration for quick benchmark mode
+                    current_duration=30
                 fi
                 # --- End dynamic duration calculation ---
 
