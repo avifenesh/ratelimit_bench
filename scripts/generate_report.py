@@ -88,9 +88,10 @@ def parse_filename(filename):
     implementation = "-".join(implementation_parts)
 
     # Create a clean implementation group name (remove cluster suffix for grouping)
-    implementation_group = implementation # Start with the parsed name
+    # Rename to 'Client' for clarity in report
+    client_name = implementation # Start with the parsed name
     if mode == "cluster": # Only remove suffix if mode is cluster
-         implementation_group = implementation_group.replace("-cluster", "").replace(":cluster", "")
+         client_name = client_name.replace("-cluster", "").replace(":cluster", "")
 
 
     # --- Fallbacks (if regex didn't find them) ---
@@ -113,15 +114,16 @@ def parse_filename(filename):
     # Ensure implementation name is reasonable
     if not implementation:
         implementation = "unknown_impl"
-        implementation_group = "unknown_impl"
+        client_name = "unknown_impl"
         print(f"Warning: Could not determine implementation for {filename}. Using '{implementation}'.")
 
     # Ensure group name is not empty if implementation was just 'cluster'
-    if not implementation_group:
-        implementation_group = implementation if implementation else "unknown_impl"
+    if not client_name:
+        client_name = implementation if implementation else "unknown_impl"
 
 
-    return implementation, mode, req_type, concurrency, duration, implementation_group
+    # Return client_name instead of implementation_group
+    return implementation, mode, req_type, concurrency, duration, client_name
 
 
 def get_throughput_from_json(filepath):
@@ -138,12 +140,11 @@ def get_throughput_from_json(filepath):
         return 0
 
 
-def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue_col='ImplementationGroup', filter_req_type=None, filter_mode=None):
+def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue_col='Client', filter_req_type=None, filter_mode=None):
     """Generates a matplotlib chart and returns it as a base64 encoded string."""
     plt.style.use('seaborn-v0_8-darkgrid')
     plt.rcParams['figure.autolayout'] = False
-    # --- Increased figure size ---
-    fig, ax = plt.subplots(figsize=(16, 8)) # Increased from (14, 7)
+    fig, ax = plt.subplots(figsize=(16, 8)) # Keep increased figure size
 
     # Define default message
     display_message = None
@@ -168,10 +169,11 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
 
     # If a message needs to be displayed (no data or all zero), show it and skip plotting
     if display_message:
-        ax.text(0.5, 0.5, display_message, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-        ax.set_title(title)
-        ax.set_xlabel(x_col.replace('Concurrency', 'Concurrency (Connections)'))
-        ax.set_ylabel(ylabel)
+        # --- Increase font size for message ---
+        ax.text(0.5, 0.5, display_message, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontsize=14)
+        ax.set_title(title, fontsize=18) # Increased title font size
+        ax.set_xlabel(x_col.replace('Concurrency', 'Concurrency (Connections)'), fontsize=14) # Increased label font size
+        ax.set_ylabel(ylabel, fontsize=14) # Increased label font size
     else:
         # Proceed with plotting logic only if there's valid, non-zero data
         try:
@@ -180,8 +182,11 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
             plot_df = plot_df.sort_values(by=x_col)
             x_labels = sorted(plot_df[x_col].unique()) # Unique concurrency values
 
-            # Use ImplementationGroup for coloring/hue
-            implementations = sorted(plot_df[hue_col].unique(), key=lambda x: (0 if 'valkey' in x.lower() else 1, x))
+            # --- Sort implementations (hue_col) to prioritize 'valkey-glide' ---
+            implementations = sorted(
+                plot_df[hue_col].unique(),
+                key=lambda x: (0 if str(x).lower() == 'valkey-glide' else (1 if 'valkey' in str(x).lower() else 2), str(x))
+            )
 
             num_implementations = len(implementations)
             # Adjust bar width dynamically, ensure minimum width
@@ -196,7 +201,7 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
             assigned_colors = {}
             fallback_idx = 0
             for impl in implementations:
-                impl_lower = impl.lower()
+                impl_lower = str(impl).lower() # Use str() for safety
                 found_color = None
                 # Check explicit mappings first
                 for key, color in COLOR_MAPPINGS.items():
@@ -245,19 +250,25 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
                             is_decimal_metric = 'latency' in y_col.lower() or 'cpu' in y_col.lower()
                             value_text = f"{height:,.2f}" if is_decimal_metric else f"{height:,.0f}"
 
-
+                        # --- Increase font size for value labels ---
                         ax.text(rect.get_x() + rect.get_width()/2., height, value_text,
                                 ha='center', va='bottom', rotation=0,
-                                fontsize=8, fontweight='bold', color='black') # Smaller font size
+                                fontsize=10, fontweight='bold', color='black') # Was 9
 
             # --- Axis Configuration ---
-            ax.set_xlabel(x_col.replace('Concurrency', 'Concurrency (Connections)'))
-            ax.set_title(title, fontsize=14, fontweight='bold')
+            # --- Increased font sizes for labels and title ---
+            ax.set_xlabel(x_col.replace('Concurrency', 'Concurrency (Connections)'), fontsize=14) # Was 12
+            ax.set_title(title, fontsize=18, fontweight='bold') # Was 16
             ax.set_xticks(x)
-            ax.set_xticklabels([str(int(label)) for label in x_labels]) # Format as integers
+            ax.set_xticklabels([str(int(label)) for label in x_labels]) # Tick labels size set below
+
+            # --- Increased font size for tick labels ---
+            ax.tick_params(axis='both', which='major', labelsize=12) # Was 11
 
             # Y-axis formatting and potential log scale for latency
             is_latency_chart = 'latency' in y_col.lower()
+            current_ylabel = ylabel # Store original ylabel before potentially adding (log scale)
+
             # Check if there are numeric values to process for scaling
             if all_y_values_numeric:
                 non_zero_positive_values = [v for v in all_y_values_numeric if v > 1e-9] # Consider values > tiny threshold
@@ -269,34 +280,33 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
                     if min_val > 1e-9 and max_val > 1e-9 and max_val / min_val > 20:
                         try:
                             ax.set_yscale('log')
-                            ax.set_ylabel(f"{ylabel} (log scale)")
+                            current_ylabel = f"{ylabel} (log scale)" # Update label text
                         except ValueError: # Fallback if log scale fails
                              ax.set_yscale('linear')
-                             ax.set_ylabel(ylabel)
                              ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x_val, p: format(int(x_val), ',')))
                     else: # Linear scale if variance isn't high or min is zero
                         ax.set_yscale('linear')
-                        ax.set_ylabel(ylabel)
                         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x_val, p: format(int(x_val), ',')))
                 else: # Not a latency chart or no positive values for latency
                      ax.set_yscale('linear') # Ensure linear scale
-                     ax.set_ylabel(ylabel)
                      # Format y-axis as integer for counts (like RateLimitHits) or non-latency floats
                      is_integer_metric = 'hits' in y_col.lower() or 'memory' in y_col.lower() or 'reqpersec' in y_col.lower()
                      formatter = plt.FuncFormatter(lambda x_val, p: format(int(x_val), ',')) if is_integer_metric else plt.FuncFormatter(lambda x_val, p: format(float(x_val), ','))
                      ax.yaxis.set_major_formatter(formatter)
 
             else: # No numeric data points at all
-                ax.set_ylabel(ylabel)
                 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x_val, p: format(int(x_val), ',')))
 
+            # --- Set Y label with potentially updated text and increased fontsize ---
+            ax.set_ylabel(current_ylabel, fontsize=14) # Was 12
 
-            # Improve legend
-            legend = ax.legend(title="Client Implementation",
+
+            # --- Improve legend with increased font sizes ---
+            legend = ax.legend(title="Client", # Changed title from Implementation
                      loc='center left',
                      bbox_to_anchor=(1.02, 0.5), # Position outside plot
-                     fontsize=10, # Slightly smaller font
-                     title_fontsize=11,
+                     fontsize=14, # Increased item font size (was 12)
+                     title_fontsize=15, # Increased title font size (was 13)
                      frameon=True, # Add frame
                      edgecolor='grey',
                      facecolor='white',
@@ -316,16 +326,15 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
              traceback.print_exc() # Print traceback for debugging
              # Clear existing axes content and add error text
              ax.clear()
-             ax.text(0.5, 0.5, f'Error generating chart:\n{e}', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, color='red', wrap=True)
-             ax.set_title(title)
+             ax.text(0.5, 0.5, f'Error generating chart:\n{e}', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, color='red', wrap=True, fontsize=12)
+             ax.set_title(title, fontsize=18)
 
 
     # --- Finalization ---
     # Convert plot to base64
     buf = BytesIO()
     # Use bbox_inches='tight' to include legend if outside plot area
-    # --- Increased DPI slightly ---
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=130) # Increased from 120
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=130) # Keep increased DPI
     buf.seek(0)
     img_base64 = base64.b64encode(buf.read()).decode('utf-8')
     plt.close(fig) # Close the figure to free memory
@@ -337,9 +346,9 @@ def generate_html_report(df, report_dir, results_dir):
     report_path = os.path.join(report_dir, REPORT_HTML_FILENAME)
     print(f"Generating HTML report at: {report_path}")
 
-    # Sort data for display - Use ImplementationGroup for consistency
+    # Sort data for display - Use Client for consistency
     df_display = df.sort_values(
-        by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'ImplementationGroup'],
+        by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'Client'],
         ascending=[True, True, True, True, True]
     ).drop(columns=['Priority']) # Drop helper column
 
@@ -373,7 +382,7 @@ def generate_html_report(df, report_dir, results_dir):
                     if y_col in df.columns:
                         charts[full_key] = generate_chart_base64(
                             df, 'Concurrency', y_col, title, ylabel,
-                            hue_col='ImplementationGroup', filter_req_type=req_type, filter_mode=mode
+                            hue_col='Client', filter_req_type=req_type, filter_mode=mode # Use Client
                         )
                     else:
                         print(f"  WARNING: Column '{y_col}' not found for chart '{title}'. Skipping chart generation.")
@@ -446,7 +455,7 @@ def generate_html_report(df, report_dir, results_dir):
         .results-table tr:hover {{ background-color: #e9ecef; }}
 
         /* Specific column widths (adjust as needed, maybe make slightly wider if needed) */
-        .results-table th:nth-child(1), .results-table td:nth-child(1) {{ width: 12%; }} /* ImplementationGroup */
+        .results-table th:nth-child(1), .results-table td:nth-child(1) {{ width: 12%; }} /* Client */
         .results-table th:nth-child(2), .results-table td:nth-child(2) {{ width: 7%; }}  /* Mode */
         .results-table th:nth-child(3), .results-table td:nth-child(3) {{ width: 7%; }}  /* RequestType */
         .results-table th:nth-child(4), .results-table td:nth-child(4) {{ width: 8%; text-align: right; }}  /* Concurrency */
@@ -491,7 +500,7 @@ def generate_html_report(df, report_dir, results_dir):
              text-align: center;
              margin-bottom: 15px;
              border-bottom: none; /* Remove border for chart titles */
-             font-size: 1.1em;
+             font-size: 1.1em; /* Keep chart title size reasonable */
              color: #34495e;
         }}
         .chart-error-message {{
@@ -560,7 +569,7 @@ def generate_html_report(df, report_dir, results_dir):
     else:
         # Select and reorder columns for the table
         table_columns = [
-            "ImplementationGroup", "Mode", "RequestType", "Concurrency", "Duration",
+            "Client", "Mode", "RequestType", "Concurrency", "Duration", # Changed ImplementationGroup to Client
             "ReqPerSec", "Latency_Avg", "Latency_P50", "Latency_P99", # Simplified latency columns
             "RateLimitHits", "CPUUsage", "MemoryUsage"
         ]
@@ -619,12 +628,15 @@ def generate_html_report(df, report_dir, results_dir):
                 html_content += f"<h2>Charts for {title_suffix}</h2>"
 
                 # --- Define chart groups ---
-                chart_groups = {
-                    "Performance Metrics": [
+                # Map internal keys to display info
+                chart_group_configs = {
+                    # --- Added note to Performance header ---
+                    "Performance Metrics (Higher is Better)": [
                         ('throughput', 'Throughput vs Concurrency', f'Throughput Chart{title_suffix}'),
-                        ('rate_limit_hits', 'Rate Limit Hits vs Concurrency', f'Rate Limit Hits Chart{title_suffix}') # Added here
+                        ('rate_limit_hits', 'Rate Limit Hits vs Concurrency', f'Rate Limit Hits Chart{title_suffix}')
                     ],
-                    "Latency Metrics": [
+                    # --- Added note to Latency header ---
+                    "Latency Metrics (Lower is Better)": [
                         ('latency_avg', 'Average Latency vs Concurrency', f'Average Latency Chart{title_suffix}'),
                         ('latency_p99', 'P99 Latency vs Concurrency', f'P99 Latency Chart{title_suffix}')
                     ],
@@ -635,25 +647,30 @@ def generate_html_report(df, report_dir, results_dir):
                 }
 
                 # --- Loop through chart groups and add separators ---
-                for group_title, configs in chart_groups.items():
-                    # Check if any chart in this group was successfully generated
-                    group_has_charts = any(charts.get(f"{key_prefix}_{cfg[0]}") for cfg in configs)
+                for group_title, configs_in_group in chart_group_configs.items():
+                    # Check if any chart in this group was successfully generated or has data
+                    group_has_content = False
+                    temp_group_html = "" # Build HTML for the group temporarily
 
-                    if group_has_charts:
+                    for chart_key, chart_title_h3, alt_text in configs_in_group:
+                        full_key = f"{key_prefix}_{chart_key}"
+                        chart_html = f'<div class="chart-container">'
+                        chart_html += f'<h3>{chart_title_h3}</h3>'
+                        if charts.get(full_key): # Check if chart data (base64 string) exists
+                            chart_html += f'<img src="{charts[full_key]}" alt="{alt_text}">'
+                            group_has_content = True # Mark group as having content
+                        else: # Display error message if chart generation failed
+                            chart_html += f'<p class="chart-error-message">Could not generate chart.</p>'
+                        chart_html += f'</div>' # Close chart-container
+                        temp_group_html += chart_html
+
+                    # Only add the group heading and grid if there was content
+                    if group_has_content:
                         html_content += f"<h4>{group_title}</h4>" # Subheading for the group
                         html_content += "<div class='chart-grid'>" # Start chart-grid for this group
-
-                        for chart_key, chart_title_h3, alt_text in configs:
-                            full_key = f"{key_prefix}_{chart_key}"
-                            html_content += f'<div class="chart-container">'
-                            html_content += f'<h3>{chart_title_h3}</h3>'
-                            if charts.get(full_key): # Check if chart data (base64 string) exists
-                                html_content += f'<img src="{charts[full_key]}" alt="{alt_text}">'
-                            else: # Display error message if chart generation failed (charts[full_key] is None)
-                                html_content += f'<p class="chart-error-message">Could not generate chart.</p>'
-                            html_content += f'</div>' # Close chart-container
-
+                        html_content += temp_group_html # Add the generated chart containers
                         html_content += "</div>" # Close chart-grid for this group
+
 
     # *** Ensure correct closing structure ***
     html_content += """
@@ -731,7 +748,7 @@ def main():
         filename = os.path.basename(filepath)
         try:
             # Use the refined parser
-            implementation, mode, req_type, concurrency, file_duration, impl_group = parse_filename(filename)
+            implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename) # Changed to client_name
 
             # Skip if parsing failed significantly (e.g., no concurrency or unknown type)
             if concurrency == 0 or req_type == "unknown":
@@ -741,8 +758,8 @@ def main():
             # Get throughput for median calculation (using the consistent helper function)
             throughput = get_throughput_from_json(filepath)
 
-            # Configuration key uses the cleaned group name
-            config_key = (impl_group.lower(), mode.lower(), req_type.lower(), concurrency)
+            # Configuration key uses the cleaned client name
+            config_key = (client_name.lower(), mode.lower(), req_type.lower(), concurrency)
 
             if config_key not in file_groups:
                 file_groups[config_key] = []
@@ -790,10 +807,10 @@ def main():
                 result_json = json.load(f)
 
             # Re-parse filename to get all metadata consistently
-            implementation, mode, req_type, concurrency, file_duration, impl_group = parse_filename(filename)
+            implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename) # Changed to client_name
 
             # Prioritize Valkey implementations for sorting later
-            priority = 1 if 'valkey' in impl_group.lower() else 2
+            priority = 1 if 'valkey' in client_name.lower() else 2 # Use client_name
 
             # Extract metrics, providing defaults (0 or NaN)
             req_per_sec = get_throughput_from_json(result_file) # Use helper again for consistency
@@ -822,10 +839,10 @@ def main():
                         print(f"  Warning: Could not convert value '{value}' (type: {type(value)}) to float in file {filename}. Using NaN.")
                     return np.nan
 
-            # Append data using ImplementationGroup
+            # Append data using Client name
             data.append({
                 "Priority": priority,
-                "ImplementationGroup": impl_group, # Use group name for consistency
+                "Client": client_name, # Use Client name for consistency
                 "Mode": mode,
                 "RequestType": req_type,
                 "Concurrency": concurrency,
@@ -858,9 +875,9 @@ def main():
     summary_csv_path = os.path.join(report_dir, SUMMARY_CSV_FILENAME)
     print(f"Generating summary CSV at: {summary_csv_path}")
     try:
-        # Define explicit column order for CSV, using ImplementationGroup
+        # Define explicit column order for CSV, using Client
         csv_columns = [
-            "ImplementationGroup", "Mode", "RequestType", "Concurrency", "Duration",
+            "Client", "Mode", "RequestType", "Concurrency", "Duration", # Changed to Client
             "ReqPerSec", "Latency_Avg", "Latency_P50", "Latency_P99", # Simplified latency
             "RateLimitHits", "CPUUsage", "MemoryUsage"
         ]
@@ -871,7 +888,7 @@ def main():
 
 
         df_csv = df_csv.sort_values(
-            by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'ImplementationGroup'],
+            by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'Client'], # Sort by Client
             ascending=[True, True, True, True, True]
         ).drop(columns=['Priority']) # Drop helper column
 
