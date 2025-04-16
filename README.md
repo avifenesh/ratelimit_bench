@@ -241,7 +241,7 @@ The benchmark results below compare the performance of different rate limiter im
 For the best experience, view the full interactive benchmark report:
 
 <div align="center">
-  <a href="report/index.html" target="_blank">
+  <a href="https://avifenesh.github.io/ratelimit_bench/" target="_blank">
     <img src="https://img.shields.io/badge/View%20Interactive-HTML%20Report-blue?style=for-the-badge" alt="View Interactive HTML Report">
   </a>
 </div>
@@ -470,8 +470,8 @@ For the best experience, view the full interactive benchmark report:
 ### Raw Data Access
 
 All benchmark data is available in the following formats:
-
-- [Interactive HTML Report](report/index.html) - Visual charts and complete results
-- [CSV Summary Data](report/summary.csv) - Raw benchmark metrics
+- [Interactive HTML Report](https://avifenesh.github.io/ratelimit_bench/) - Visual charts and complete results
+- [CSV Summary Data](https://avifenesh.github.io/ratelimit_bench/summary.csv) - Raw benchmark metrics
+- *Note: Detailed run-specific JSON files are available in the repository under `results/latest/` but are not hosted on the Pages site.*
 
 *Last updated: April 16, 2025*
