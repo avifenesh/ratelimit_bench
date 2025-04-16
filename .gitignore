@@ -35,8 +35,6 @@ docker-volumes/
 # Log files
 *.log
 
-.github/
-
 # Database files
 dump.rdb
 nodes.conf
