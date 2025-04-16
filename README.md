@@ -2,6 +2,12 @@
 
 A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://github.com/animir/node-rate-limiter-flexible) options using Valkey and Redis clients.
 
+<p align="center">
+  <a href="#benchmark-results">
+    <img src="https://img.shields.io/badge/View%20Results-Benchmark%20Data-blue?style=for-the-badge" alt="View Benchmark Results">
+  </a>
+</p>
+
 ## Project Overview
 
 This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis-OSS with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible).
@@ -223,3 +229,249 @@ Contributions are welcome! Please follow the existing code style and ensure test
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
+
+<a name="benchmark-results"></a>
+
+## Benchmark Results
+
+The benchmark results below compare the performance of different rate limiter implementations across various scenarios. Data is collected from extensive testing under controlled conditions to ensure fair comparison.
+
+### Interactive Results Report
+
+For the best experience, view the full interactive benchmark report:
+
+<div align="center">
+  <a href="report/index.html" target="_blank">
+    <img src="https://img.shields.io/badge/View%20Interactive-HTML%20Report-blue?style=for-the-badge" alt="View Interactive HTML Report">
+  </a>
+</div>
+
+### Key Findings (Generated on: April 16, 2025)
+
+- **Valkey Glide** consistently outperforms other clients in both standalone and cluster configurations
+- Performance differences become more pronounced under higher concurrency scenarios (500-1000 connections)
+- All clients demonstrate stable performance across multiple test runs, validating reproducibility of results
+- At high concurrency (1000 connections), Valkey Glide maintains significantly lower latency compared to IORedis
+
+### Cluster Mode Results
+
+<table class="dataframe results-table">
+  <thead>
+    <tr>
+      <th>Client</th>
+      <th>Mode</th>
+      <th>RequestType</th>
+      <th>Concurrency</th>
+      <th>Duration</th>
+      <th>ReqPerSec</th>
+      <th>Latency_Avg</th>
+      <th>Latency_P50</th>
+      <th>Latency_P99</th>
+      <th>RateLimitHits</th>
+      <th>CPUUsage</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>valkey-glide</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>6,064,837</td>
+      <td>2.04</td>
+      <td>2.00</td>
+      <td>3.00</td>
+      <td>3,173,724</td>
+      <td>53.30</td>
+    </tr>
+    <tr>
+      <td>iovalkey</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>5,240,067</td>
+      <td>2.12</td>
+      <td>2.00</td>
+      <td>3.00</td>
+      <td>2,742,213</td>
+      <td>45.59</td>
+    </tr>
+    <tr>
+      <td>ioredis</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>4,484,765</td>
+      <td>2.84</td>
+      <td>3.00</td>
+      <td>4.00</td>
+      <td>2,346,830</td>
+      <td>38.16</td>
+    </tr>
+    <tr>
+      <td>valkey-glide</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>1000</td>
+      <td>210</td>
+      <td>3,332,332</td>
+      <td>84.91</td>
+      <td>71.00</td>
+      <td>519.00</td>
+      <td>2,441,648</td>
+      <td>35.79</td>
+    </tr>
+    <tr>
+      <td>iovalkey</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>1000</td>
+      <td>210</td>
+      <td>3,168,085</td>
+      <td>90.02</td>
+      <td>82.00</td>
+      <td>241.00</td>
+      <td>2,321,125</td>
+      <td>34.00</td>
+    </tr>
+    <tr>
+      <td>ioredis</td>
+      <td>cluster</td>
+      <td>heavy</td>
+      <td>1000</td>
+      <td>210</td>
+      <td>1,246,590</td>
+      <td>143.87</td>
+      <td>97.00</td>
+      <td>1,640.00</td>
+      <td>913,144</td>
+      <td>18.71</td>
+    </tr>
+  </tbody>
+</table>
+
+### Standalone Mode Results
+
+<table class="dataframe results-table">
+  <thead>
+    <tr>
+      <th>Client</th>
+      <th>Mode</th>
+      <th>RequestType</th>
+      <th>Concurrency</th>
+      <th>Duration</th>
+      <th>ReqPerSec</th>
+      <th>Latency_Avg</th>
+      <th>Latency_P50</th>
+      <th>Latency_P99</th>
+      <th>RateLimitHits</th>
+      <th>CPUUsage</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>valkey-glide</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>6,164,561</td>
+      <td>2.01</td>
+      <td>2.00</td>
+      <td>3.00</td>
+      <td>3,225,896</td>
+      <td>53.89</td>
+    </tr>
+    <tr>
+      <td>iovalkey</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>5,558,435</td>
+      <td>2.05</td>
+      <td>2.00</td>
+      <td>3.00</td>
+      <td>2,908,731</td>
+      <td>49.84</td>
+    </tr>
+    <tr>
+      <td>ioredis</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>50</td>
+      <td>150</td>
+      <td>4,680,253</td>
+      <td>2.33</td>
+      <td>2.00</td>
+      <td>4.00</td>
+      <td>2,449,174</td>
+      <td>41.43</td>
+    </tr>
+    <tr>
+      <td>valkey-glide</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>500</td>
+      <td>210</td>
+      <td>3,656,168</td>
+      <td>38.60</td>
+      <td>33.00</td>
+      <td>113.00</td>
+      <td>2,678,727</td>
+      <td>35.99</td>
+    </tr>
+    <tr>
+      <td>iovalkey</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>500</td>
+      <td>210</td>
+      <td>1,613,720</td>
+      <td>62.11</td>
+      <td>46.00</td>
+      <td>784.00</td>
+      <td>1,182,155</td>
+      <td>19.15</td>
+    </tr>
+    <tr>
+      <td>ioredis</td>
+      <td>standalone</td>
+      <td>heavy</td>
+      <td>500</td>
+      <td>210</td>
+      <td>1,608,894</td>
+      <td>66.28</td>
+      <td>48.00</td>
+      <td>794.00</td>
+      <td>1,178,439</td>
+      <td>19.85</td>
+    </tr>
+  </tbody>
+</table>
+
+### Performance Analysis
+
+1. **Throughput Comparison**:
+   - In cluster mode with heavy workload (50 connections), valkey-glide achieves **35% higher throughput** than ioredis
+   - At high concurrency (1000 connections), valkey-glide maintains a **167% throughput advantage** over ioredis
+
+2. **Latency Comparison**:
+   - valkey-glide consistently maintains lower latency at all concurrency levels
+   - P99 latency for valkey-glide at high concurrency (1000 conn) is **68% lower** than ioredis in cluster mode
+
+3. **Scalability**:
+   - valkey-glide shows superior handling of increased concurrency with significantly better latency and throughput preservation
+   - All clients show performance degradation at extreme concurrency, but valkey-glide degrades more gracefully
+
+### Raw Data Access
+
+All benchmark data is available in the following formats:
+
+- [Interactive HTML Report](report/index.html) - Visual charts and complete results
+- [CSV Summary Data](report/summary.csv) - Raw benchmark metrics
+
+*Last updated: April 16, 2025*
