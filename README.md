@@ -7,12 +7,13 @@ A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://gi
     <img src="https://img.shields.io/badge/View%20Interactive-HTML%20Report-blue?style=for-the-badge" alt="View Interactive HTML Report">
   </a>
 </div>
-- [CSV Summary Data](https://avifenesh.github.io/ratelimit_bench/summary.csv) - Raw benchmark metrics
 <p align="center">
   <a href="#benchmark-results">
     <img src="https://img.shields.io/badge/View%20Results-Benchmark%20Data-blue?style=for-the-badge" alt="View Benchmark Results">
   </a>
 </p>
+
+[CSV Summary Data](https://avifenesh.github.io/ratelimit_bench/summary.csv) - Raw benchmark metrics
 
 ## Project Overview
 
