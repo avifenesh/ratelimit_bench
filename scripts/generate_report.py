@@ -341,16 +341,81 @@ def generate_chart_base64(df, x_col, y_col, title, ylabel, chart_type='bar', hue
     return f"data:image/png;base64,{img_base64}"
 
 
+def collect_all_error_data(results_dir):
+    """Collect error data from all runs, not just median runs."""
+    print("Collecting error data from all runs...")
+    all_error_data = []
+    
+    # Find all JSON result files
+    all_files = []
+    try:
+        for filename in os.listdir(results_dir):
+            if filename.endswith(".json"):
+                all_files.append(os.path.join(results_dir, filename))
+    except OSError as e:
+        print(f"Error reading results directory '{results_dir}': {e}")
+        return []
+        
+    for filepath in all_files:
+        filename = os.path.basename(filepath)
+        try:
+            # Parse filename to get metadata
+            implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename)
+            
+            # Read the JSON file
+            with open(filepath, 'r') as f:
+                result_json = json.load(f)
+                
+            # Extract error data
+            errors = result_json.get('errors', 0)
+            timeouts = result_json.get('timeouts', 0)
+            total_errors = errors + timeouts
+            
+            # Add to error data collection
+            all_error_data.append({
+                "Client": client_name,
+                "Mode": mode,
+                "RequestType": req_type,
+                "Concurrency": concurrency,
+                "Errors": int(errors) if isinstance(errors, (int, float)) else 0,
+                "Timeouts": int(timeouts) if isinstance(timeouts, (int, float)) else 0,
+                "TotalErrors": int(total_errors) if isinstance(total_errors, (int, float)) else 0,
+            })
+            
+        except Exception as e:
+            print(f"Warning: Error processing file {filename} for error data: {e}")
+            
+    return all_error_data
+
+
 def generate_html_report(df, report_dir, results_dir):
     """Generates the HTML report file with corrected structure and styles."""
     report_path = os.path.join(report_dir, REPORT_HTML_FILENAME)
     print(f"Generating HTML report at: {report_path}")
-
-    # Sort data for display - Use Client for consistency
+    
+    # Collect error data from all runs
+    all_error_data = collect_all_error_data(results_dir)
+    error_df = pd.DataFrame(all_error_data) if all_error_data else pd.DataFrame()
+    
+    # Sort data by configuration and then order clients as: valkey-glide, iovalkey, ioredis
+    # Create a client priority column for fine-grained sorting
+    def get_client_priority(client):
+        client_lower = str(client).lower()
+        if 'valkey-glide' in client_lower:
+            return 1
+        elif 'iovalkey' in client_lower:
+            return 2
+        elif 'ioredis' in client_lower:
+            return 3
+        return 4  # Any other clients
+        
+    df['ClientPriority'] = df['Client'].apply(get_client_priority)
+    
+    # Sort by configuration components first, then by the client priority (valkey-glide, iovalkey, ioredis)
     df_display = df.sort_values(
-        by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'Client'],
-        ascending=[True, True, True, True, True]
-    ).drop(columns=['Priority']) # Drop helper column
+        by=['RequestType', 'Mode', 'Concurrency', 'ClientPriority'],
+        ascending=[True, True, True, True]
+    ).drop(columns=['Priority', 'ClientPriority']) # Drop helper columns
 
     # Define request_types and modes for iteration
     request_types = sorted(df['RequestType'].unique())
@@ -544,6 +609,40 @@ def generate_html_report(df, report_dir, results_dir):
         }}
         /* Hide tooltip attribute visually */
         td[title] {{ cursor: help; }}
+        
+        /* Error summary styling */
+        .error-summary {{
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            border-left: 5px solid #dc3545;
+        }}
+        .error-summary h3 {{
+            color: #343a40;
+            margin-top: 0;
+            font-size: 1.1em;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 8px;
+        }}
+        .error-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }}
+        .error-table th, .error-table td {{
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }}
+        .error-table th {{
+            background-color: #e9ecef;
+            font-weight: bold;
+        }}
+        .error-table tr:hover {{
+            background-color: #f1f3f5;
+        }}
 
     </style>
 </head>
@@ -626,6 +725,49 @@ def generate_html_report(df, report_dir, results_dir):
                 key_prefix = f"{req_type}_{mode}"
                 title_suffix = f" ({req_type.capitalize()} Workload, {mode.capitalize()} Mode)"
                 html_content += f"<h2>Charts for {title_suffix}</h2>"
+                
+                # Add error summary for this workload and mode
+                html_content += "<div class='error-summary'>"
+                html_content += "<h3>Error Summary (Across All Runs)</h3>"
+                html_content += "<table class='error-table'>"
+                html_content += "<tr><th>Client</th><th>Total Errors</th><th>Connection Errors</th><th>Timeouts</th></tr>"
+                
+                # Get data for this workload and mode from the complete error dataset
+                if not error_df.empty:
+                    workload_mode_data = error_df[
+                        (error_df['RequestType'] == req_type) & 
+                        (error_df['Mode'] == mode)
+                    ].copy()
+                    
+                    # Sort clients in our desired order
+                    def get_client_priority(client):
+                        client_lower = str(client).lower()
+                        if 'valkey-glide' in client_lower:
+                            return 1
+                        elif 'iovalkey' in client_lower:
+                            return 2
+                        elif 'ioredis' in client_lower:
+                            return 3
+                        return 4
+                    
+                    workload_mode_data['ClientPriority'] = workload_mode_data['Client'].apply(get_client_priority)
+                    workload_mode_data = workload_mode_data.sort_values('ClientPriority')
+                    
+                    # Calculate total errors per client for this workload/mode
+                    client_errors = workload_mode_data.groupby('Client').agg({
+                        'TotalErrors': 'sum',
+                        'Errors': 'sum',
+                        'Timeouts': 'sum'
+                    }).reset_index()
+                    
+                    # Add a row for each client
+                    for _, row in client_errors.iterrows():
+                        html_content += f"<tr><td>{row['Client']}</td><td>{int(row['TotalErrors'])}</td><td>{int(row['Errors'])}</td><td>{int(row['Timeouts'])}</td></tr>"
+                else:
+                    html_content += "<tr><td colspan='4'>No error data available</td></tr>"
+                
+                html_content += "</table>"
+                html_content += "</div>"
 
                 # --- Define chart groups ---
                 # Map internal keys to display info
@@ -839,6 +981,11 @@ def main():
                         print(f"  Warning: Could not convert value '{value}' (type: {type(value)}) to float in file {filename}. Using NaN.")
                     return np.nan
 
+            # Extract error information
+            errors = result_json.get('errors', 0)
+            timeouts = result_json.get('timeouts', 0)
+            total_errors = errors + timeouts
+            
             # Append data using Client name
             data.append({
                 "Priority": priority,
@@ -855,6 +1002,9 @@ def main():
                 "RateLimitHits": int(safe_float(rate_limit_hits)) if pd.notna(safe_float(rate_limit_hits)) else 0, # Default 0 for hits
                 "CPUUsage": safe_float(cpu_usage),
                 "MemoryUsage": safe_float(memory_usage),
+                "Errors": int(errors) if isinstance(errors, (int, float)) else 0,
+                "Timeouts": int(timeouts) if isinstance(timeouts, (int, float)) else 0,
+                "TotalErrors": int(total_errors) if isinstance(total_errors, (int, float)) else 0,
             })
             # print(f"  Processed: {filename}")
 
@@ -887,10 +1037,24 @@ def main():
         df_csv = df[cols_to_select].copy()
 
 
+        # Apply the same client priority sorting as in the HTML report
+        def get_client_priority(client):
+            client_lower = str(client).lower()
+            if 'valkey-glide' in client_lower:
+                return 1
+            elif 'iovalkey' in client_lower:
+                return 2
+            elif 'ioredis' in client_lower:
+                return 3
+            return 4  # Any other clients
+        
+        df_csv['ClientPriority'] = df_csv['Client'].apply(get_client_priority)
+        
+        # Sort by configuration, then by client priority
         df_csv = df_csv.sort_values(
-            by=['Priority', 'RequestType', 'Mode', 'Concurrency', 'Client'], # Sort by Client
-            ascending=[True, True, True, True, True]
-        ).drop(columns=['Priority']) # Drop helper column
+            by=['RequestType', 'Mode', 'Concurrency', 'ClientPriority'],
+            ascending=[True, True, True, True]
+        ).drop(columns=['Priority', 'ClientPriority']) # Drop helper columns
 
         # Reorder to final CSV columns, ensuring they exist
         df_csv = df_csv[[col for col in csv_columns if col in df_csv.columns]]
