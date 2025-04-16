@@ -1,11 +1,13 @@
-name: Deploy Report to GitHub Pages
+name: Deploy static content to Pages
 
 on:
   push:
-    branches:
-      - main
-    paths:
+    branches: main
+    paths: 
       - 'report/**'
+      - '.github/workflows/deploy-pages.yml'
+      - 'README.md'
+
   workflow_dispatch:
 
 permissions:
@@ -19,19 +21,19 @@ concurrency:
 
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Pages
-        uses: actions/configure-pages@v4
-        with:
-          enablement: true
+        uses: actions/configure-pages@v5
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire report directory
-          path: './report'
+          path: 'report'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
