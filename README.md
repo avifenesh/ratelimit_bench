@@ -2,6 +2,8 @@
 
 A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://github.com/animir/node-rate-limiter-flexible) options using Valkey and Redis clients.
 
+- [Interactive HTML Report](https://avifenesh.github.io/ratelimit_bench/) - Visual charts and complete results
+- [CSV Summary Data](https://avifenesh.github.io/ratelimit_bench/summary.csv) - Raw benchmark metrics
 <p align="center">
   <a href="#benchmark-results">
     <img src="https://img.shields.io/badge/View%20Results-Benchmark%20Data-blue?style=for-the-badge" alt="View Benchmark Results">
