@@ -117,20 +117,34 @@ The benchmark suite covers multiple testing scenarios:
 
 1. **Workload Types**:
    - Light workload: Minimal API processing
-   - Heavy workload: Compute-intensive API responses
+   - Heavy workload: Compute-intensive API responses (configurable complexity level)
 
 2. **Run Durations**:
    - Short (30s) for quick comparisons
-   - Long (120s) for sustained performance analysis
+   - Medium (120s) for sustained performance analysis
+   - Extended (150s) for 50-100 connection tests with heavy workloads
+   - Long (180-210s) for high concurrency tests (500-1000 connections)
 
 3. **Concurrency Levels**:
-   - 50, 100 simultaneous connections
-   - Additional run of 1000 connections in cluster mode.
-   - Additional run of 500 connections in standalone.
+   - 50 connections: Base testing level for all configurations
+   - 100 connections: Medium load testing for all configurations
+   - 500 connections: High load testing for standalone mode
+   - 1000 connections: Extreme load testing for cluster mode
 
 4. **Deployment Variations**:
    - Standalone: Single Redis/Valkey instance
    - Cluster: 6-node configuration (3 primaries, 3 replicas)
+
+5. **Client Implementations**:
+   - Valkey Glide (both standalone and cluster modes)
+   - IOValkey (both standalone and cluster modes)
+   - Redis IORedis (both standalone and cluster modes)
+
+6. **Test Iterations**:
+   - Each configuration runs 3 times to ensure statistical significance
+   - Includes 10-second warmup period before each test
+   - 5-second cooldown between test configurations
+   - 10-second cooldown between different client implementations
 
 ## Metrics Collected
 
