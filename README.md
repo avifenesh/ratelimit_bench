@@ -32,6 +32,10 @@ To use valkey-glide you can visit [npm](https://www.npmjs.com/package/@valkey/va
   - Rate limiter factory (`src/server/lib/rateLimiterFactory.ts`)
   - Client management (`src/server/lib/clientFactory.ts`)
 
+- **Valkey and Redis used as backends for rate limiting**
+  - **Valkey**: Latest at the point of the benchmark - v8.1.0
+  - **Redis**: Latest OSS version which wasn't published as Valkey as well - v7.0.0
+
 - **Rate Limiters**: Using rate-limiter-flexible with different backends:
   - **Valkey Glide** – Modern TypeScript-native client, built with a focus on stability, reliability, performance, and scalability. Designed specifically to provide superior fault tolerance and user experience.
   - **IOValkey** – Client based on the ioredis API, enhanced with Valkey performance.
