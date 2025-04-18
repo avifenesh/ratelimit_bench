@@ -12,8 +12,8 @@ on:
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
-    runs-on: 'ubuntu-latest'
+    name: Analyze (${{ matrix.language }}) on (${{ matrix.host }})
+    runs-on: ${{ matrix.host }}
     permissions:
       security-events: write
       packages: read
@@ -28,28 +28,37 @@ jobs:
           build-mode: none
         - language: python
           build-mode: none
-        - language: action
-          build-mode: none
+        host: 
+            - 'ubuntu-latest'
+            - 'ubuntu-22.04'
+            - 'ubuntu-24.04-arm'
+            - 'ubuntu-22.04-arm'
+            - 'macos-14'
+            - 'macos-15'
+          # TODO:
+          # macos-13
+          # ubuntu-20.04
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+    - name: Setup Node.js environment
+      uses: actions/setup-node@v3.9.1
+      with:
+        node-version: 22
 
+    - name: install valkey-glide
+      run: |
+        npm install @valkey/valkey-glide
+        npm install --global yarn pnpm
+        pnpm install @valkey/valkey-glide
+        yarn add @valkey/valkey-glide
+          
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
         
-    - if: matrix.build-mode == 'manual'
-      shell: bash
-      run: |
-        echo 'If you are using a "manual" build mode for one or more of the' \
-          'languages you are analyzing, replace this with the commands to build' \
-          'your code, for example:'
-        echo '  make bootstrap'
-        echo '  make release'
-        exit 1
-
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
       with:
