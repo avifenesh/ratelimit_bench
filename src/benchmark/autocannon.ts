@@ -2,6 +2,7 @@ import autocannon, { Instance, Result } from "autocannon";
 import { performance } from "perf_hooks";
 import { writeFileSync } from "fs";
 import { monitorResources } from "./monitor.js";
+import { randomInt } from "crypto";
 
 interface BenchmarkOptions {
   url: string;
@@ -47,7 +48,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<void> {
   );
 
   // Use a fixed userId for the entire benchmark run to test rate limiting
-  const userId = `user-${Math.floor(Math.random() * 1000)}`;
+  const userId = `user-${randomInt(0, 1000)}`;
   const finalUrl = `${url}?userId=${userId}`;
   console.log(`Autocannon targeting URL: ${finalUrl}`);
 
