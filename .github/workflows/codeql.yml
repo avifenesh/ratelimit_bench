@@ -51,7 +51,7 @@ jobs:
         npm install @valkey/valkey-glide
         npm install --global yarn pnpm
         pnpm install @valkey/valkey-glide
-        yarn add @valkey/valkey-glide
+      # TODO yarn add @valkey/valkey-glide
           
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
