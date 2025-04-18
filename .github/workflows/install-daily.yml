@@ -32,10 +32,10 @@ jobs:
           # ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    - run: npm install --global @valkey/valkey-glide
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v3.9.1
+        with:
+         node-version: ${{ matrix.node-version }}
+         
+      - name: install
+        run: npm install --global @valkey/valkey-glide
