@@ -74,19 +74,78 @@ To use valkey-glide you can visit [npm](https://www.npmjs.com/package/@valkey/va
     ```
 
 3. **Run Benchmarks:**
-    Use the main script to run all tests and generate the report automatically:
 
-    ```bash
-    ./scripts/run-all.sh
-    ```
+### Interactive Mode (Recommended)
 
-    Follow the prompts to choose between:
-    - Quick Benchmark (light workload)
-    - Full Benchmark (light workload and heavy workload)
+Run the enhanced script without arguments for a guided configuration:
+
+```bash
+./scripts/run-all.sh
+```
+
+This provides an interactive menu to select:
+- **Specific clients**: Choose individual clients (valkey-glide, iovalkey, ioredis) or groups (standalone, cluster, all)
+- **Workload types**: Light, heavy, or both computational workloads
+- **Duration mode**:
+  - Dynamic (120s for ≤100 connections, 180s for >100 connections, +30s for cluster)
+  - Fixed durations (30s, 120s, or custom)
+- **Concurrency levels**: Light load (50-100), medium (50-500), heavy (50-1000), extreme (100-2000), or custom
+
+### Non-Interactive Mode
+
+Run with command line arguments for automated execution:
+
+```bash
+# Test only valkey-glide standalone with light workload and dynamic duration
+./scripts/run-all.sh --clients valkey-glide --workload light --duration-mode dynamic --concurrency "50 100"
+
+# Test all standalone clients with both workloads and fixed 30s duration
+./scripts/run-all.sh --clients standalone --workload both --duration-mode fixed30 --concurrency "50 100"
+
+# Test all cluster implementations with heavy workload and custom duration
+./scripts/run-all.sh --clients cluster --workload heavy --duration-mode custom:90 --concurrency "100 500"
+
+# Test specific clients with dynamic duration (optimal for each concurrency/cluster combination)
+./scripts/run-all.sh --clients "valkey-glide,iovalkey:cluster" --workload light --duration-mode dynamic --concurrency "50 200 500"
+```
+
+### Available Options
+
+- `--clients`: Specify client(s) to test
+  - Individual: `valkey-glide`, `iovalkey`, `ioredis`
+  - With cluster: `valkey-glide:cluster`, `iovalkey:cluster`, `ioredis:cluster`
+  - Groups: `all`, `standalone`, `cluster`
+  - Custom list (comma-separated): `valkey-glide,iovalkey:cluster`
+- `--workload`: Workload type (`light`, `heavy`, `both`)
+- `--duration-mode`: Duration calculation method
+  - `dynamic`: 120s for ≤100 connections, 180s for >100 connections, +30s for cluster
+  - `fixed30`: Fixed 30 seconds for all tests
+  - `fixed120`: Fixed 120 seconds for all tests
+  - `custom:N`: Custom duration of N seconds
+- `--concurrency`: Concurrency level(s) (space-separated for multiple)
+- `--help`: Show detailed help with examples
+
+### Dynamic Duration Logic
+
+The dynamic duration mode automatically adjusts test duration based on:
+
+- **Concurrency**: 120s for 50-100 connections, 180s for 500-1000 connections
+- **Cluster**: Additional 30s for cluster configurations (allows for cluster coordination overhead)
+
+Examples:
+
+- valkey-glide with 50 connections: 120s
+- valkey-glide with 500 connections: 180s  
+- valkey-glide:cluster with 50 connections: 150s (120s + 30s)
+- valkey-glide:cluster with 500 connections: 210s (180s + 30s)
+
+### Legacy Mode
+
+The script still supports the original simple prompts when called without the enhanced options above.
 
 ## Benchmark Options
 
-The `run-all.sh` script provides a comprehensive benchmark suite, but you can also customize individual runs using environment variables:
+The enhanced `run-all.sh` script provides granular control over benchmark execution. For advanced users, you can also customize individual runs using the underlying `run-benchmark.sh` script with environment variables:
 
 ```bash
 # Example: Run a 60-second benchmark with 50 connections using the light workload against valkey-glide

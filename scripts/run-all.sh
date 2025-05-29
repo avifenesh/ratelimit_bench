@@ -7,6 +7,45 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_BASE_DIR="$(pwd)/results"
 RESULTS_DIR="${RESULTS_BASE_DIR}/${TIMESTAMP}"
 
+# Benchmark timing constants
+COOLDOWN_BETWEEN_TESTS=5
+COOLDOWN_BETWEEN_TYPES=10
+
+# Initialize configuration variables
+SELECTED_CLIENTS=""
+RUN_LIGHT_WORKLOAD=false
+RUN_HEAVY_WORKLOAD=false
+BENCHMARK_CONCURRENCY=""
+USE_DYNAMIC_DURATION=false
+FIXED_DURATION=""
+
+# Function to calculate dynamic duration
+calculate_duration() {
+  local concurrency=$1
+  local client=$2
+  local base_duration
+  
+  # Base duration based on concurrency
+  if [ "$concurrency" -le 100 ]; then
+    base_duration=120
+  else
+    base_duration=180
+  fi
+  
+  # Add 30 seconds for cluster setups
+  if [[ "$client" == *":cluster" ]]; then
+    base_duration=$((base_duration + 30))
+  fi
+  
+  echo "$base_duration"
+}
+
+# Command line argument variables
+ARG_CLIENT=""
+ARG_WORKLOAD=""
+ARG_DURATION=""
+ARG_CONCURRENCY=""
+
 # Create directory structure before any logging happens
 mkdir -p "$RESULTS_DIR"
 MKDIR_EXIT_CODE=$?
@@ -76,7 +115,7 @@ build_application() {
 }
 
 start_containers() {
-  log "Starting Podman containers..."
+  log "Starting containers based on selected clients..."
 
   # Clean the project before starting containers
   log "Cleaning the project..."
@@ -110,99 +149,132 @@ start_containers() {
   log "Creating benchmark network..."
   podman network create benchmark-network 2>/dev/null || true
   
-  # Start Valkey containers first (prioritizing Valkey implementations)
-  log "Starting Valkey standalone..."
-  podman run -d \
-    --name benchmark-valkey \
-    --restart on-failure:3 \
-    -p 8080:6379 \
-    --network benchmark-network \
-    --ulimit nproc=65535 \
-    --ulimit nofile=65535:65535 \
-    --cpus 2 \
-    --memory 2G \
-    --cap-add SYS_RESOURCE \
-    valkey/valkey:latest \
-    valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
+  # Determine what containers to start based on selected clients
+  NEED_VALKEY_STANDALONE=false
+  NEED_VALKEY_CLUSTER=false
+  NEED_REDIS_STANDALONE=false
+  NEED_REDIS_CLUSTER=false
   
-  log "Starting Valkey cluster..."
+  for client in $SELECTED_CLIENTS; do
+    case $client in
+      *valkey-glide*|*iovalkey*)
+        if [[ $client == *":cluster"* ]]; then
+          NEED_VALKEY_CLUSTER=true
+        else
+          NEED_VALKEY_STANDALONE=true
+        fi
+        ;;
+      *ioredis*)
+        if [[ $client == *":cluster"* ]]; then
+          NEED_REDIS_CLUSTER=true
+        else
+          NEED_REDIS_STANDALONE=true
+        fi
+        ;;
+    esac
+  done
   
-  # Create a pod for Valkey cluster with port mappings
-  podman pod create --name valkey-cluster-pod --network benchmark-network \
-    -p 7000:7000 -p 7001:7001 -p 7002:7002 -p 7003:7003 -p 7004:7004 -p 7005:7005
-  
-  # Start Valkey cluster nodes
-  for i in {1..6}; do
-    port=$((7000 + i - 1))
+  # Start Valkey containers if needed
+  if [ "$NEED_VALKEY_STANDALONE" = "true" ]; then
+    log "Starting Valkey standalone..."
     podman run -d \
-      --name ratelimit_bench-valkey-node$i \
+      --name benchmark-valkey \
+      --restart on-failure:3 \
+      -p 8080:6379 \
+      --network benchmark-network \
+      --ulimit nproc=65535 \
+      --ulimit nofile=65535:65535 \
+      --cpus 2 \
+      --memory 2G \
+      --cap-add SYS_RESOURCE \
+      valkey/valkey:latest \
+      valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
+  fi
+  
+  if [ "$NEED_VALKEY_CLUSTER" = "true" ]; then
+    log "Starting Valkey cluster..."
+    
+    # Create a pod for Valkey cluster with port mappings
+    podman pod create --name valkey-cluster-pod --network benchmark-network \
+      -p 7000:7000 -p 7001:7001 -p 7002:7002 -p 7003:7003 -p 7004:7004 -p 7005:7005
+    
+    # Start Valkey cluster nodes
+    for i in {1..6}; do
+      port=$((7000 + i - 1))
+      podman run -d \
+        --name ratelimit_bench-valkey-node$i \
+        --pod valkey-cluster-pod \
+        --restart on-failure:3 \
+        --ulimit nproc=65535 \
+        --ulimit nofile=65535:65535 \
+        --cpus 1 \
+        --memory 1G \
+        valkey/valkey:8.1 \
+        valkey-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
+    done
+    
+    # Wait for nodes to start
+    sleep 5
+    
+    # Create cluster setup container
+    podman run -d \
+      --name ratelimit_bench-valkey-cluster-setup \
       --pod valkey-cluster-pod \
       --restart on-failure:3 \
+      valkey/valkey:8.1 \
+      sh -c 'sleep 10 && echo "yes" | valkey-cli --cluster create localhost:7000 localhost:7001 localhost:7002 localhost:7003 localhost:7004 localhost:7005 --cluster-replicas 1'
+  fi
+  
+  # Start Redis containers if needed  
+  if [ "$NEED_REDIS_STANDALONE" = "true" ]; then
+    log "Starting Redis standalone..."
+    podman run -d \
+      --name benchmark-redis \
+      --restart on-failure:3 \
+      -p 6379:6379 \
+      --network benchmark-network \
       --ulimit nproc=65535 \
       --ulimit nofile=65535:65535 \
-      --cpus 1 \
-      --memory 1G \
-      valkey/valkey:8.1 \
-      valkey-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
-  done
+      --cpus 2 \
+      --memory 2G \
+      --cap-add SYS_RESOURCE \
+      redis:8 \
+      redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
+  fi
   
-  # Wait for nodes to start
-  sleep 5
-  
-  # Create cluster setup container
-  podman run -d \
-    --name ratelimit_bench-valkey-cluster-setup \
-    --pod valkey-cluster-pod \
-    --restart on-failure:3 \
-    valkey/valkey:8.1 \
-    sh -c 'sleep 10 && echo "yes" | valkey-cli --cluster create localhost:7000 localhost:7001 localhost:7002 localhost:7003 localhost:7004 localhost:7005 --cluster-replicas 1'
-  
-  # Then start Redis containers
-  log "Starting Redis standalone..."
-  podman run -d \
-    --name benchmark-redis \
-    --restart on-failure:3 \
-    -p 6379:6379 \
-    --network benchmark-network \
-    --ulimit nproc=65535 \
-    --ulimit nofile=65535:65535 \
-    --cpus 2 \
-    --memory 2G \
-    --cap-add SYS_RESOURCE \
-    redis:8 \
-    redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
-  
-  log "Starting Redis cluster..."
-  
-  # Create a pod for Redis cluster with port mappings
-  podman pod create --name redis-cluster-pod --network benchmark-network \
-    -p 6380:6380 -p 6381:6381 -p 6382:6382 -p 6383:6383 -p 6384:6384 -p 6385:6385
-  
-  # Start Redis cluster nodes
-  for i in {1..6}; do
-    port=$((6380 + i - 1))
+  if [ "$NEED_REDIS_CLUSTER" = "true" ]; then
+    log "Starting Redis cluster..."
+    
+    # Create a pod for Redis cluster with port mappings
+    podman pod create --name redis-cluster-pod --network benchmark-network \
+      -p 6380:6380 -p 6381:6381 -p 6382:6382 -p 6383:6383 -p 6384:6384 -p 6385:6385
+    
+    # Start Redis cluster nodes
+    for i in {1..6}; do
+      port=$((6380 + i - 1))
+      podman run -d \
+        --name ratelimit_bench-redis-node$i \
+        --pod redis-cluster-pod \
+        --restart on-failure:3 \
+        --ulimit nproc=65535 \
+        --ulimit nofile=65535:65535 \
+        --cpus 1 \
+        --memory 1G \
+        redis:8 \
+        redis-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
+    done
+    
+    # Wait for nodes to start
+    sleep 5
+    
+    # Create cluster setup container
     podman run -d \
-      --name ratelimit_bench-redis-node$i \
+      --name ratelimit_bench-redis-cluster-setup \
       --pod redis-cluster-pod \
       --restart on-failure:3 \
-      --ulimit nproc=65535 \
-      --ulimit nofile=65535:65535 \
-      --cpus 1 \
-      --memory 1G \
       redis:8 \
-      redis-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
-  done
-  
-  # Wait for nodes to start
-  sleep 5
-  
-  # Create cluster setup container
-  podman run -d \
-    --name ratelimit_bench-redis-cluster-setup \
-    --pod redis-cluster-pod \
-    --restart on-failure:3 \
-    redis:8 \
-    sh -c 'sleep 10 && echo "yes" | redis-cli --cluster create localhost:6380 localhost:6381 localhost:6382 localhost:6383 localhost:6384 localhost:6385 --cluster-replicas 1'
+      sh -c 'sleep 10 && echo "yes" | redis-cli --cluster create localhost:6380 localhost:6381 localhost:6382 localhost:6383 localhost:6384 localhost:6385 --cluster-replicas 1'
+  fi
   
   # Make sure all containers are on the same network
   log "Ensuring all containers are on the benchmark network..."
@@ -210,21 +282,24 @@ start_containers() {
     podman network connect benchmark-network $container 2>/dev/null || true
   done
   
-  # Verify network connectivity
+  # Verify network connectivity for started containers
   log "Verifying network connectivity between containers..."
-  # Check if Valkey container is accessible
-  podman exec benchmark-valkey valkey-cli PING 2>/dev/null | grep -q "PONG" && \
-    log "Valkey container is accessible" || log "WARNING: Valkey container is not responding"
   
-  # Check if Redis container is accessible
-  podman exec benchmark-redis redis-cli PING 2>/dev/null | grep -q "PONG" && \
-    log "Redis container is accessible" || log "WARNING: Redis container is not responding"
+  if [ "$NEED_VALKEY_STANDALONE" = "true" ]; then
+    podman exec benchmark-valkey valkey-cli PING 2>/dev/null | grep -q "PONG" && \
+      log "Valkey container is accessible" || log "WARNING: Valkey container is not responding"
+  fi
+  
+  if [ "$NEED_REDIS_STANDALONE" = "true" ]; then
+    podman exec benchmark-redis redis-cli PING 2>/dev/null | grep -q "PONG" && \
+      log "Redis container is accessible" || log "WARNING: Redis container is not responding"
+  fi
   
   # Wait for containers to be ready
   log "Waiting for containers to be ready..."
   sleep 10
   
-  log_success "All containers started successfully"
+  log_success "Selected containers started successfully"
 }
 
 run_benchmarks() {
@@ -241,81 +316,57 @@ run_benchmarks() {
   export BENCHMARK_NETWORK="benchmark-network"
   export RESULTS_DIR_HOST="$RESULTS_DIR"
   
-  if [ "$RUN_LONG_BENCHMARKS" = "true" ]; then
-    # For full benchmark, run with multiple concurrency levels and longer duration
-    CONCURRENCY_LEVELS="10 50 100 500 1000"
-    
-    # Set workload types based on user selection
-    WORKLOAD_TYPES=""
-    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
-      WORKLOAD_TYPES="${WORKLOAD_TYPES}light "
-    fi
-    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
-      WORKLOAD_TYPES="${WORKLOAD_TYPES}heavy"
-    fi
-    REQUEST_TYPES="$WORKLOAD_TYPES"
-    
-    # Run light workload benchmark if selected
-    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
-      # Run light workload with short duration
-      log "Running light workload benchmark (short duration)..."
-      DURATION=30 BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
-      
-      # Run light workload with long duration
-      log "Running light workload benchmark (long duration)..."
-      DURATION=120 BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
-    fi
-    
-    # Run heavy workload benchmark if selected
-    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
-      # Run heavy workload with short duration and reduced complexity
-      log "Running heavy workload benchmark (short duration)..."
-      DURATION=30 COMPUTATION_COMPLEXITY=5 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
-      
-      # Run heavy workload with long duration and reduced complexity
-      log "Running heavy workload benchmark (long duration with reduced complexity)..."
-      DURATION=120 COMPUTATION_COMPLEXITY=5 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
-    fi
-  else
-    # For quick benchmark, run only 30-second tests with 50 connections
-    log "Running quick benchmarks (30s only)..."
-    
-    # Force 30-second duration for all tests
-    export DURATION=30
-    
-    # Force single concurrency level
-    export CONCURRENCY=50
-    
-    # Only run one test for each implementation (no long tests)
-    export SKIP_LONG_TESTS=true
-    
-    # Set workload types based on user selection
-    WORKLOAD_TYPES=""
-    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
-      WORKLOAD_TYPES="${WORKLOAD_TYPES}light "
-    fi
-    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
-      WORKLOAD_TYPES="${WORKLOAD_TYPES}heavy"
-    fi
-    export REQUEST_TYPES="$WORKLOAD_TYPES"
-    
-    # Run light workload benchmark if selected
-    if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
-      log "Running light workload benchmark (30s, 50 connections)..."
-      BENCHMARK_REQUEST_TYPES="light" $BENCHMARK_SCRIPT
-    fi
-    
-    # Run heavy workload benchmark if selected
-    if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
-      log "Running heavy workload benchmark (30s, 50 connections)..."
-      COMPUTATION_COMPLEXITY=10 BENCHMARK_REQUEST_TYPES="heavy" $BENCHMARK_SCRIPT
-    fi
+  # Set workload types based on user selection
+  WORKLOAD_TYPES=""
+  if [ "$RUN_LIGHT_WORKLOAD" = "true" ]; then
+    WORKLOAD_TYPES="${WORKLOAD_TYPES}light "
   fi
+  if [ "$RUN_HEAVY_WORKLOAD" = "true" ]; then
+    WORKLOAD_TYPES="${WORKLOAD_TYPES}heavy"
+  fi
+  WORKLOAD_TYPES=$(echo "$WORKLOAD_TYPES" | xargs) # Trim whitespace
+  
+  # Set common environment variables
+  export BENCHMARK_REQUEST_TYPES="$WORKLOAD_TYPES"
+  
+  # Run benchmarks for each concurrency level and client combination
+  for concurrency in $BENCHMARK_CONCURRENCY; do
+    for client in $SELECTED_CLIENTS; do
+      # Calculate duration for this specific combination
+      if [ "$USE_DYNAMIC_DURATION" = "true" ]; then
+        duration=$(calculate_duration "$concurrency" "$client")
+      else
+        duration="$FIXED_DURATION"
+      fi
+      
+      log "Running benchmark: ${client} with ${concurrency} connections for ${duration}s..."
+      
+      # Set environment variables for this specific run
+      export BENCHMARK_DURATION="$duration"
+      export CONCURRENCY="$concurrency"
+      export RATE_LIMITER_TYPES="$client"
+      
+      # Run the benchmark with current settings
+      $BENCHMARK_SCRIPT
+      
+      # Wait between client tests
+      log "Waiting ${COOLDOWN_BETWEEN_TESTS}s before next test..."
+      sleep $COOLDOWN_BETWEEN_TESTS
+    done
+    
+    # Wait between concurrency level tests
+    log "Waiting ${COOLDOWN_BETWEEN_TYPES}s before next concurrency level..."
+    sleep $COOLDOWN_BETWEEN_TYPES
+  done
   
   # Unset environment variables
   unset CONTAINERS_ALREADY_RUNNING
   unset BENCHMARK_NETWORK
   unset RESULTS_DIR_HOST
+  unset BENCHMARK_DURATION
+  unset BENCHMARK_REQUEST_TYPES
+  unset RATE_LIMITER_TYPES
+  unset CONCURRENCY
   
   log_success "All benchmark runs completed"
 }
@@ -409,62 +460,491 @@ show_results() {
   log_success "Or view the latest run report: file://${RESULTS_DIR}/report/index.html"
 }
 
-# Clear screen and display header
-clear
-echo "==============================================="
-echo "  Valkey vs Redis Rate Limiter Benchmark Suite "
-echo "==============================================="
-echo
-echo "This script will run a complete benchmark comparing"
-echo "Valkey and Redis rate limiting implementations."
-echo
-echo "Options:"
-echo "  1. Quick Benchmark (30s runs)"
-echo "  2. Full Benchmark (30s + 120s runs)"
-echo
-echo "Workload Options:"
-echo "  a. All workloads (default)"
-echo "  l. Light workload only"
-echo "  h. Heavy workload only"
-echo
-read -p "Select benchmark option (1/2): " -n 1 benchmark_option
-echo
-read -p "Select workload type (a/l/h): " -n 1 workload_type
-echo
+# Function to show usage
+show_usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo
+  echo "Options:"
+  echo "  --clients CLIENT_LIST    Comma-separated list of clients to test"
+  echo "                          Options: valkey-glide, iovalkey, ioredis,"
+  echo "                                  valkey-glide:cluster, iovalkey:cluster, ioredis:cluster"
+  echo "                          Special: standalone, cluster, all"
+  echo "  --workload WORKLOAD     Workload type: light, heavy, both (default: both)"
+  echo "  --concurrency LEVELS    Space-separated concurrency levels (default: 50 100 500 1000)"
+  echo "  --duration-mode MODE    Duration mode: dynamic, fixed30, fixed120, custom:N"
+  echo "                          dynamic: 120s for ≤100c, 180s for >100c, +30s for cluster"
+  echo "  --help                  Show this help message"
+  echo
+  echo "Examples:"
+  echo "  $0 --clients valkey-glide,ioredis --workload light --concurrency \"50 100\""
+  echo "  $0 --clients cluster --duration-mode fixed30"
+  echo "  $0 --clients all --workload both --duration-mode dynamic"
+  echo
+  echo "Interactive mode:"
+  echo "  $0                      (run without arguments for guided configuration)"
+  echo
+  exit 0
+}
 
-# Set benchmark type
-case $benchmark_option in
-  1)
-    RUN_LONG_BENCHMARKS=false
-    ;;
-  2)
-    RUN_LONG_BENCHMARKS=true
-    ;;
-  *)
-    log_error "Invalid benchmark selection. Exiting."
-    exit 1
-    ;;
-esac
+# Parse command line arguments
+parse_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --clients)
+        ARG_CLIENTS="$2"
+        shift 2
+        ;;
+      --workload)
+        ARG_WORKLOAD="$2"
+        shift 2
+        ;;
+      --concurrency)
+        ARG_CONCURRENCY="$2"
+        shift 2
+        ;;
+      --duration-mode)
+        ARG_DURATION_MODE="$2"
+        shift 2
+        ;;
+      --help)
+        show_usage
+        ;;
+      *)
+        echo "Unknown option: $1"
+        show_usage
+        ;;
+    esac
+  done
+}
 
-# Set workload type
-case $workload_type in
-  a|A|"") # Default to all if empty
-    RUN_LIGHT_WORKLOAD=true
-    RUN_HEAVY_WORKLOAD=true
-    ;;
-  l|L)
-    RUN_LIGHT_WORKLOAD=true
-    RUN_HEAVY_WORKLOAD=false
-    ;;
-  h|H)
-    RUN_LIGHT_WORKLOAD=false
-    RUN_HEAVY_WORKLOAD=true
-    ;;
-  *)
-    log_error "Invalid workload selection. Exiting."
-    exit 1
-    ;;
-esac
+# Set configuration from arguments
+set_config_from_args() {
+  # Set clients
+  if [ -n "$ARG_CLIENTS" ]; then
+    case $ARG_CLIENTS in
+      standalone)
+        SELECTED_CLIENTS="valkey-glide iovalkey ioredis"
+        ;;
+      cluster)
+        SELECTED_CLIENTS="valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+        ;;
+      all)
+        SELECTED_CLIENTS="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+        ;;
+      *)
+        SELECTED_CLIENTS=$(echo "$ARG_CLIENTS" | tr ',' ' ')
+        ;;
+    esac
+  fi
+  
+  # Set workload
+  if [ -n "$ARG_WORKLOAD" ]; then
+    case $ARG_WORKLOAD in
+      light)
+        RUN_LIGHT_WORKLOAD=true
+        RUN_HEAVY_WORKLOAD=false
+        ;;
+      heavy)
+        RUN_LIGHT_WORKLOAD=false
+        RUN_HEAVY_WORKLOAD=true
+        ;;
+      both)
+        RUN_LIGHT_WORKLOAD=true
+        RUN_HEAVY_WORKLOAD=true
+        ;;
+    esac
+  fi
+  
+  # Set concurrency
+  if [ -n "$ARG_CONCURRENCY" ]; then
+    BENCHMARK_CONCURRENCY="$ARG_CONCURRENCY"
+  fi
+  
+  # Set duration mode
+  if [ -n "$ARG_DURATION_MODE" ]; then
+    case $ARG_DURATION_MODE in
+      dynamic)
+        USE_DYNAMIC_DURATION=true
+        ;;
+      fixed30)
+        USE_DYNAMIC_DURATION=false
+        FIXED_DURATION=30
+        ;;
+      fixed120)
+        USE_DYNAMIC_DURATION=false
+        FIXED_DURATION=120
+        ;;
+      custom:*)
+        USE_DYNAMIC_DURATION=false
+        FIXED_DURATION="${ARG_DURATION_MODE#custom:}"
+        ;;
+    esac
+  fi
+}
+
+# Check if we should run in non-interactive mode
+should_run_interactive() {
+  [ -z "$ARG_CLIENTS" ] && [ -z "$ARG_WORKLOAD" ] && [ -z "$ARG_CONCURRENCY" ] && [ -z "$ARG_DURATION_MODE" ]
+}
+show_help() {
+  echo "Usage: $0 [OPTIONS]"
+  echo
+  echo "Options:"
+  echo "  --client CLIENT        Specify client(s) to test:"
+  echo "                         valkey-glide, iovalkey, ioredis"
+  echo "                         Add ':cluster' for cluster mode (e.g., valkey-glide:cluster)"
+  echo "                         Use 'all', 'standalone', or 'cluster' for groups"
+  echo "  --workload WORKLOAD    Specify workload type: light, heavy, or both"
+  echo "  --duration DURATIONS   Specify duration(s) in seconds (space-separated)"
+  echo "  --concurrency LEVELS   Specify concurrency level(s) (space-separated)"
+  echo "  --help                 Show this help message"
+  echo
+  echo "Examples:"
+  echo "  $0 --client valkey-glide --workload light --duration \"30 120\" --concurrency \"50 100\""
+  echo "  $0 --client all --workload both --duration 30 --concurrency 50"
+  echo "  $0 --client standalone --workload heavy --duration 60 --concurrency \"100 500\""
+  echo
+  echo "Interactive mode:"
+  echo "  $0    (run without arguments for interactive configuration)"
+}
+
+parse_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --client)
+        ARG_CLIENT="$2"
+        shift 2
+        ;;
+      --workload)
+        ARG_WORKLOAD="$2"
+        shift 2
+        ;;
+      --duration)
+        ARG_DURATION="$2"
+        shift 2
+        ;;
+      --concurrency)
+        ARG_CONCURRENCY="$2"
+        shift 2
+        ;;
+      --help|-h)
+        show_help
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1"
+        show_help
+        exit 1
+        ;;
+    esac
+  done
+}
+
+configure_benchmark() {
+  # If arguments were provided, use non-interactive mode
+  if [ -n "$ARG_CLIENT" ] || [ -n "$ARG_WORKLOAD" ] || [ -n "$ARG_DURATION" ] || [ -n "$ARG_CONCURRENCY" ]; then
+    log "Running in non-interactive mode with provided arguments..."
+    
+    # Set client types
+    case $ARG_CLIENT in
+      valkey-glide)
+        SELECTED_CLIENTS="valkey-glide"
+        ;;
+      iovalkey)
+        SELECTED_CLIENTS="iovalkey"
+        ;;
+      ioredis)
+        SELECTED_CLIENTS="ioredis"
+        ;;
+      valkey-glide:cluster)
+        SELECTED_CLIENTS="valkey-glide:cluster"
+        ;;
+      iovalkey:cluster)
+        SELECTED_CLIENTS="iovalkey:cluster"
+        ;;
+      ioredis:cluster)
+        SELECTED_CLIENTS="ioredis:cluster"
+        ;;
+      standalone)
+        SELECTED_CLIENTS="valkey-glide iovalkey ioredis"
+        ;;
+      cluster)
+        SELECTED_CLIENTS="valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+        ;;
+      all|"")
+        SELECTED_CLIENTS="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+        ;;
+      *)
+        # Custom client list
+        SELECTED_CLIENTS="$ARG_CLIENT"
+        ;;
+    esac
+    
+    # Set workload type
+    case $ARG_WORKLOAD in
+      light)
+        RUN_LIGHT_WORKLOAD=true
+        RUN_HEAVY_WORKLOAD=false
+        ;;
+      heavy)
+        RUN_LIGHT_WORKLOAD=false
+        RUN_HEAVY_WORKLOAD=true
+        ;;
+      both|"")
+        RUN_LIGHT_WORKLOAD=true
+        RUN_HEAVY_WORKLOAD=true
+        ;;
+      *)
+        log_error "Invalid workload type: $ARG_WORKLOAD"
+        exit 1
+        ;;
+    esac
+    
+    # Set durations
+    BENCHMARK_DURATIONS="${ARG_DURATION:-30 120}"
+    
+    # Set concurrency
+    BENCHMARK_CONCURRENCY="${ARG_CONCURRENCY:-50 100 500}"
+    
+    # Show configuration
+    echo "==============================================="
+    echo "Non-Interactive Benchmark Configuration:"
+    echo "==============================================="
+    echo "Clients: $SELECTED_CLIENTS"
+    echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
+    echo "Durations: $BENCHMARK_DURATIONS seconds"
+    echo "Concurrency: $BENCHMARK_CONCURRENCY"
+    echo "==============================================="
+    
+    return
+  fi
+  
+  # Interactive mode
+  # Clear screen and display header
+  clear
+  echo "==============================================="
+  echo "  Valkey vs Redis Rate Limiter Benchmark Suite "
+  echo "==============================================="
+  echo
+  echo "This script allows you to run customizable benchmarks comparing"
+  echo "Valkey and Redis rate limiting implementations."
+  echo
+  
+  # Client selection
+  echo "Available Clients:"
+  echo "  1. valkey-glide (standalone)"
+  echo "  2. iovalkey (standalone)"
+  echo "  3. ioredis (standalone)"
+  echo "  4. valkey-glide (cluster)"
+  echo "  5. iovalkey (cluster)"
+  echo "  6. ioredis (cluster)"
+  echo "  7. All standalone clients"
+  echo "  8. All cluster clients"
+  echo "  9. All clients (default)"
+  echo
+  read -p "Select client(s) to test (1-9): " -n 1 client_option
+  echo
+  
+  # Set client types
+  case $client_option in
+    1)
+      SELECTED_CLIENTS="valkey-glide"
+      ;;
+    2)
+      SELECTED_CLIENTS="iovalkey"
+      ;;
+    3)
+      SELECTED_CLIENTS="ioredis"
+      ;;
+    4)
+      SELECTED_CLIENTS="valkey-glide:cluster"
+      ;;
+    5)
+      SELECTED_CLIENTS="iovalkey:cluster"
+      ;;
+    6)
+      SELECTED_CLIENTS="ioredis:cluster"
+      ;;
+    7)
+      SELECTED_CLIENTS="valkey-glide iovalkey ioredis"
+      ;;
+    8)
+      SELECTED_CLIENTS="valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+      ;;
+    9|"")
+      SELECTED_CLIENTS="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+      ;;
+    *)
+      log_error "Invalid client selection. Exiting."
+      exit 1
+      ;;
+  esac
+  
+  # Workload selection
+  echo "Workload Options:"
+  echo "  1. Light workload only"
+  echo "  2. Heavy workload only"
+  echo "  3. Both workloads (default)"
+  echo
+  read -p "Select workload type (1-3): " -n 1 workload_option
+  echo
+  
+  case $workload_option in
+    1)
+      RUN_LIGHT_WORKLOAD=true
+      RUN_HEAVY_WORKLOAD=false
+      ;;
+    2)
+      RUN_LIGHT_WORKLOAD=false
+      RUN_HEAVY_WORKLOAD=true
+      ;;
+    3|"")
+      RUN_LIGHT_WORKLOAD=true
+      RUN_HEAVY_WORKLOAD=true
+      ;;
+    *)
+      log_error "Invalid workload selection. Exiting."
+      exit 1
+      ;;
+  esac
+  
+  # Duration selection
+  echo "Duration Mode:"
+  echo "  1. Dynamic duration (120s for 50-100c, 180s for 500-1000c, +30s for cluster)"
+  echo "  2. Fixed short duration (30s for all)"
+  echo "  3. Fixed medium duration (120s for all)"
+  echo "  4. Custom duration"
+  echo
+  read -p "Select duration mode (1-4): " -n 1 duration_option
+  echo
+  
+  case $duration_option in
+    1)
+      USE_DYNAMIC_DURATION=true
+      ;;
+    2)
+      USE_DYNAMIC_DURATION=false
+      FIXED_DURATION=30
+      ;;
+    3)
+      USE_DYNAMIC_DURATION=false
+      FIXED_DURATION=120
+      ;;
+    4)
+      USE_DYNAMIC_DURATION=false
+      echo
+      read -p "Enter custom duration in seconds: " custom_duration
+      FIXED_DURATION="$custom_duration"
+      ;;
+    *)
+      log_error "Invalid duration selection. Exiting."
+      exit 1
+      ;;
+  esac
+  
+  # Concurrency selection
+  echo
+  echo "Concurrency Options:"
+  echo "  1. Light load (50 100)"
+  echo "  2. Medium load (50 100 500)"
+  echo "  3. Heavy load (50 100 500 1000)"
+  echo "  4. Extreme load (100 500 1000 2000)"
+  echo "  5. Custom concurrency"
+  echo
+  read -p "Select concurrency option (1-5): " -n 1 concurrency_option
+  echo
+  
+  case $concurrency_option in
+    1)
+      BENCHMARK_CONCURRENCY="50 100"
+      ;;
+    2)
+      BENCHMARK_CONCURRENCY="50 100 500"
+      ;;
+    3)
+      BENCHMARK_CONCURRENCY="50 100 500 1000"
+      ;;
+    4)
+      BENCHMARK_CONCURRENCY="100 500 1000 2000"
+      ;;
+    5)
+      echo
+      read -p "Enter custom concurrency levels (space separated, e.g., '10 50 200'): " custom_concurrency
+      BENCHMARK_CONCURRENCY="$custom_concurrency"
+      ;;
+    *)
+      log_error "Invalid concurrency selection. Exiting."
+      exit 1
+      ;;
+  esac
+  
+  # Summary
+  echo
+  echo "==============================================="
+  echo "Benchmark Configuration Summary:"
+  echo "==============================================="
+  echo "Clients: $SELECTED_CLIENTS"
+  echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
+  if [ "$USE_DYNAMIC_DURATION" = "true" ]; then
+    echo "Duration: Dynamic (120s for 50-100c, 180s for 500-1000c, +30s for cluster)"
+  else
+    echo "Duration: Fixed ${FIXED_DURATION}s"
+  fi
+  echo "Concurrency: $BENCHMARK_CONCURRENCY"
+  echo "==============================================="
+  echo
+  read -p "Proceed with this configuration? (y/n): " -n 1 confirm
+  echo
+  
+  if [[ ! $confirm =~ ^[Yy]$ ]]; then
+    log "Benchmark cancelled by user."
+    exit 0
+  fi
+}
+
+# Parse command line arguments
+parse_arguments "$@"
+
+# Parse command line arguments first
+parse_arguments "$@"
+
+# Set default values if not provided
+if [ -z "$SELECTED_CLIENTS" ]; then
+  SELECTED_CLIENTS="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
+fi
+if [ -z "$BENCHMARK_CONCURRENCY" ]; then
+  BENCHMARK_CONCURRENCY="50 100 500 1000"
+fi
+if [ "$RUN_LIGHT_WORKLOAD" = false ] && [ "$RUN_HEAVY_WORKLOAD" = false ]; then
+  RUN_LIGHT_WORKLOAD=true
+  RUN_HEAVY_WORKLOAD=true
+fi
+if [ "$USE_DYNAMIC_DURATION" = false ] && [ -z "$FIXED_DURATION" ]; then
+  USE_DYNAMIC_DURATION=true
+fi
+
+# Set configuration from arguments if provided, otherwise run interactive mode
+if should_run_interactive; then
+  configure_benchmark
+else
+  set_config_from_args
+  # Show non-interactive configuration summary
+  echo "==============================================="
+  echo "  Valkey vs Redis Rate Limiter Benchmark Suite "
+  echo "==============================================="
+  echo
+  echo "Running in non-interactive mode with:"
+  echo "Clients: $SELECTED_CLIENTS"
+  echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
+  if [ "$USE_DYNAMIC_DURATION" = "true" ]; then
+    echo "Duration: Dynamic (120s for 50-100c, 180s for 500-1000c, +30s for cluster)"
+  else
+    echo "Duration: Fixed ${FIXED_DURATION}s"
+  fi
+  echo "Concurrency: $BENCHMARK_CONCURRENCY"
+  echo "==============================================="
+  echo
+fi
 
 # Start benchmark process
 setup_environment
