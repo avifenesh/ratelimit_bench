@@ -76,18 +76,21 @@ build_application() {
 }
 
 start_containers() {
-  log "Starting Docker containers..."
+  log "Starting Podman containers..."
 
   # Clean the project before starting containers
   log "Cleaning the project..."
   npm run clean
   
   # Stop any running containers first
-  log "Stopping any existing containers..."
-  docker-compose down -v &>/dev/null || true
-  
-  # Copy built files to Docker volumes if needed
-  log "Copying built application code to Docker volume..."
+  log "Stopping any existing containers..."  
+  podman stop --all &>/dev/null || true
+  podman pod stop --all &>/dev/null || true
+  podman container rm --all &>/dev/null || true
+  podman pod rm --all &>/dev/null || true
+
+  # Copy built files to Podman volumes if needed
+  log "Copying built application code to Podman volume..."
   if [ ! -d "./dist" ]; then
     log "No built code found. Attempting to build the application again..."
     npm run build
@@ -97,7 +100,7 @@ start_containers() {
     mkdir -p ./docker/app
     cp -r ./dist ./docker/app/
     cp package.json ./docker/app/
-    log "Application code copied to Docker volume"
+    log "Application code copied to Podman volume"
   else
     log_error "No built code found even after rebuilding. Check for build errors."
     exit 1
@@ -105,56 +108,116 @@ start_containers() {
   
   # Create the benchmark network explicitly
   log "Creating benchmark network..."
-  docker network create benchmark-network 2>/dev/null || true
+  podman network create benchmark-network 2>/dev/null || true
   
   # Start Valkey containers first (prioritizing Valkey implementations)
   log "Starting Valkey standalone..."
-  docker-compose up -d valkey
-  
-  # Ensure Valkey standalone is connected to the benchmark network
-  log "Connecting Valkey standalone to benchmark network..."
-  docker network connect benchmark-network benchmark-valkey 2>/dev/null || true
+  podman run -d \
+    --name benchmark-valkey \
+    --restart on-failure:3 \
+    -p 8080:6379 \
+    --network benchmark-network \
+    --ulimit nproc=65535 \
+    --ulimit nofile=65535:65535 \
+    --cpus 2 \
+    --memory 2G \
+    --cap-add SYS_RESOURCE \
+    valkey/valkey:latest \
+    valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
   
   log "Starting Valkey cluster..."
-  docker-compose -f docker-compose-valkey-cluster.yml up -d
   
-  # Connect Valkey cluster nodes to benchmark network
-  log "Connecting Valkey cluster nodes to benchmark network..."
+  # Create a pod for Valkey cluster
+  podman pod create --name valkey-cluster-pod --network benchmark-network
+  
+  # Start Valkey cluster nodes
   for i in {1..6}; do
-    docker network connect benchmark-network ratelimit_bench-valkey-node$i-1 2>/dev/null || true
+    port=$((7000 + i - 1))
+    podman run -d \
+      --name ratelimit_bench-valkey-node$i \
+      --pod valkey-cluster-pod \
+      --restart on-failure:3 \
+      -p $port:6379 \
+      --ulimit nproc=65535 \
+      --ulimit nofile=65535:65535 \
+      --cpus 1 \
+      --memory 1G \
+      valkey/valkey:8.1 \
+      valkey-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
   done
+  
+  # Wait for nodes to start
+  sleep 5
+  
+  # Create cluster setup container
+  podman run -d \
+    --name ratelimit_bench-valkey-cluster-setup \
+    --pod valkey-cluster-pod \
+    --restart on-failure:3 \
+    valkey/valkey:8.1 \
+    sh -c 'sleep 10 && echo "yes" | valkey-cli --cluster create localhost:7000 localhost:7001 localhost:7002 localhost:7003 localhost:7004 localhost:7005 --cluster-replicas 1'
   
   # Then start Redis containers
   log "Starting Redis standalone..."
-  docker-compose up -d redis
-  
-  # Ensure Redis standalone is connected to the benchmark network
-  log "Connecting Redis standalone to benchmark network..."
-  docker network connect benchmark-network benchmark-redis 2>/dev/null || true
+  podman run -d \
+    --name benchmark-redis \
+    --restart on-failure:3 \
+    -p 6379:6379 \
+    --network benchmark-network \
+    --ulimit nproc=65535 \
+    --ulimit nofile=65535:65535 \
+    --cpus 2 \
+    --memory 2G \
+    --cap-add SYS_RESOURCE \
+    redis:8 \
+    redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
   
   log "Starting Redis cluster..."
-  docker-compose -f docker-compose-redis-cluster.yml up -d
   
-  # Connect Redis cluster nodes to benchmark network
-  log "Connecting Redis cluster nodes to benchmark network..."
+  # Create a pod for Redis cluster
+  podman pod create --name redis-cluster-pod --network benchmark-network
+  
+  # Start Redis cluster nodes
   for i in {1..6}; do
-    docker network connect benchmark-network ratelimit_bench-redis-node$i-1 2>/dev/null || true
+    port=$((6380 + i - 1))
+    podman run -d \
+      --name ratelimit_bench-redis-node$i \
+      --pod redis-cluster-pod \
+      --restart on-failure:3 \
+      -p $port:6379 \
+      --ulimit nproc=65535 \
+      --ulimit nofile=65535:65535 \
+      --cpus 1 \
+      --memory 1G \
+      redis:8 \
+      redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
   done
+  
+  # Wait for nodes to start
+  sleep 5
+  
+  # Create cluster setup container
+  podman run -d \
+    --name ratelimit_bench-redis-cluster-setup \
+    --pod redis-cluster-pod \
+    --restart on-failure:3 \
+    redis:8 \
+    sh -c 'sleep 10 && echo "yes" | redis-cli --cluster create localhost:6380 localhost:6381 localhost:6382 localhost:6383 localhost:6384 localhost:6385 --cluster-replicas 1'
   
   # Make sure all containers are on the same network
   log "Ensuring all containers are on the benchmark network..."
-  for container in $(docker ps --format "{{.Names}}"); do
-    docker network connect benchmark-network $container 2>/dev/null || true
+  for container in $(podman ps --format "{{.Names}}"); do
+    podman network connect benchmark-network $container 2>/dev/null || true
   done
   
   # Verify network connectivity
   log "Verifying network connectivity between containers..."
   # Check if Valkey container is accessible
-  docker exec benchmark-valkey redis-cli PING 2>/dev/null | grep -q "PONG" && \
+  podman exec benchmark-valkey redis-cli PING 2>/dev/null | grep -q "PONG" && \
     log "Valkey container is accessible" || log "WARNING: Valkey container is not responding"
   
   # Check if Redis container is accessible
-  docker exec benchmark-redis redis-cli PING 2>/dev/null | grep -q "PONG" && \
+  podman exec benchmark-redis redis-cli PING 2>/dev/null | grep -q "PONG" && \
     log "Redis container is accessible" || log "WARNING: Redis container is not responding"
   
   # Wait for containers to be ready
@@ -324,12 +387,14 @@ cleanup() {
   read -p "Do you want to stop all Docker containers? (y/n) " -n 1 -r
   echo
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    docker-compose down -v
-    docker-compose -f docker-compose-valkey-cluster.yml down -v
-    docker-compose -f docker-compose-redis-cluster.yml down -v
-    log "All Docker containers stopped"
+    podman stop --all
+    podman pod stop --all  
+    podman container rm --all
+    podman pod rm --all
+    podman network rm benchmark-network 2>/dev/null || true
+    log "All Podman containers and pods stopped"
   else
-    log "Docker containers left running"
+    log "Podman containers left running"
   fi
   
   log_success "Cleanup complete"

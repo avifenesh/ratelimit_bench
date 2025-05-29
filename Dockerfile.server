@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:20
 
 WORKDIR /app
 
@@ -19,5 +19,5 @@ COPY . .
 # Set environment variables for network configuration
 ENV DOCKER_NETWORK="ratelimit_bench_benchmark_network"
 
-# Use node command directly
+# Use node command directly with restart policy handled by docker-compose
 CMD ["node", "dist/server/index.js"]

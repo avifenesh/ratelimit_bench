@@ -1,7 +1,8 @@
 services:
   redis-node1:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node1
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6371:6379"
@@ -12,8 +13,9 @@ services:
       - benchmark-network
 
   redis-node2:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node2
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6372:6379"
@@ -24,8 +26,9 @@ services:
       - benchmark-network
 
   redis-node3:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node3
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6373:6379"
@@ -36,8 +39,9 @@ services:
       - benchmark-network
 
   redis-node4:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node4
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6374:6379"
@@ -48,8 +52,9 @@ services:
       - benchmark-network
 
   redis-node5:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node5
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6375:6379"
@@ -60,8 +65,9 @@ services:
       - benchmark-network
 
   redis-node6:
-    image: "redis:latest"
+    image: "redis:8"
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-node6
+    restart: on-failure:3
     command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6376:6379"
@@ -72,7 +78,7 @@ services:
       - benchmark-network
 
   redis-cluster-setup:
-    image: redis:latest
+    image: redis:8
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-redis-cluster-setup
     command: >
       bash -c '

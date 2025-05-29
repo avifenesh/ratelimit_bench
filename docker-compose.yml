@@ -1,7 +1,8 @@
 services:
   redis:
-    image: redis:7
+    image: redis:8
     container_name: benchmark-redis
+    restart: on-failure:3
     ports:
       - "6379:6379"
     command: redis-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
@@ -23,6 +24,7 @@ services:
   valkey:
     image: valkey/valkey:8.1
     container_name: benchmark-valkey
+    restart: on-failure:3
     ports:
       - "8080:6379"
     command: valkey-server --save "" --appendonly no --maxmemory 1gb --maxmemory-policy volatile-lru
@@ -38,6 +40,26 @@ services:
           memory: 2G
     cap_add:
       - SYS_RESOURCE
+    networks:
+      - benchmark_network
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: benchmark-server
+    restart: on-failure:3
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - MODE=valkey-glide
+      - VALKEY_HOST=benchmark-valkey
+      - VALKEY_PORT=6379
+    depends_on:
+      - redis
+      - valkey
     networks:
       - benchmark_network
 

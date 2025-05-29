@@ -63,10 +63,10 @@ echo "[$(date +'%Y-%m-%d %H:%M:%S')] SUCCESS: $1" | tee -a "$LOG_FILE"
 }
 
 ensure_network() {
-    log "Ensuring Docker network '$BENCHMARK_NETWORK' exists..."
-    if ! docker network inspect "$BENCHMARK_NETWORK" >/dev/null 2>&1; then
-        log "Creating Docker network '$BENCHMARK_NETWORK'..."
-        docker network create "$BENCHMARK_NETWORK"
+    log "Ensuring Podman network '$BENCHMARK_NETWORK' exists..."
+    if ! podman network inspect "$BENCHMARK_NETWORK" >/dev/null 2>&1; then
+        log "Creating Podman network '$BENCHMARK_NETWORK'..."
+        podman network create "$BENCHMARK_NETWORK"
     else
         log "Network '$BENCHMARK_NETWORK' already exists."
     fi
@@ -74,14 +74,14 @@ ensure_network() {
 
 cleanup_containers() {
     log "Cleaning up containers..."
-    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker rm "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman stop "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman rm "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 
     if [[ -n "$CURRENT_COMPOSE_FILE" ]]; then
         log "Stopping database containers defined in $CURRENT_COMPOSE_FILE..."
-        docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
+        podman-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
         CURRENT_COMPOSE_FILE=""
     fi
     log "Cleanup complete."
@@ -94,19 +94,20 @@ run_server_container() {
   local network_name=$3
   
   log "Starting server container ($SERVER_IMAGE_TAG)..."
-  log "Using Docker network: $network_name"
+  log "Using Podman network: $network_name"
   
-  if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+  if ! podman network inspect "$network_name" >/dev/null 2>&1; then
     log "ERROR: Network $network_name does not exist!"
     log "Available networks:"
-    docker network ls
+    podman network ls
     log "An error occurred. Cleaning up..."
     cleanup_containers
     exit 1
   fi
   
-  server_container_id=$(docker run -d \
+  server_container_id=$(podman run -d \
     --name "$SERVER_CONTAINER_NAME" \
+    --restart=on-failure:3 \
     --network "$network_name" \
     -p "$DEFAULT_SERVER_PORT:$DEFAULT_SERVER_PORT" \
     -e "MODE=$rate_limiter" \
@@ -140,7 +141,7 @@ verify_database_connection() {
   fi
   
   for ((i=1; i<=$retries; i++)); do
-    if docker exec $container_name $cli_command -p $port PING 2>/dev/null | grep -q "PONG"; then
+    if podman exec $container_name $cli_command -p $port PING 2>/dev/null | grep -q "PONG"; then
       log "Successfully connected to $db_tech at $container_name:$port"
       connected=true
       break
@@ -152,7 +153,7 @@ verify_database_connection() {
   if [ "$connected" = false ]; then
     log "WARNING: Could not connect to $db_tech at $container_name:$port"
     log "Database container logs:"
-    docker logs $container_name | tail -20
+    podman logs $container_name | tail -20
     return 1
   fi
   
@@ -162,15 +163,15 @@ verify_database_connection() {
       local db_tech=$1
       
       if [[ "$db_tech" == "redis" ]]; then
-        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "redis|Redis" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
+        ACTUAL_DB_CONTAINER=$(podman ps --format "{{.Names}}" | grep -E "redis|Redis" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
       elif [[ "$db_tech" == "valkey" ]]; then
-        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "valkey|Valkey" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
+        ACTUAL_DB_CONTAINER=$(podman ps --format "{{.Names}}" | grep -E "valkey|Valkey" | grep -v -E "exporter|cluster-setup|node[1-6]" | head -1)
       fi
       
       if [[ -z "$ACTUAL_DB_CONTAINER" && "$db_tech" == "redis" ]]; then
-        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "redis-node1" | head -1)
+        ACTUAL_DB_CONTAINER=$(podman ps --format "{{.Names}}" | grep -E "redis-node1" | head -1)
       elif [[ -z "$ACTUAL_DB_CONTAINER" && "$db_tech" == "valkey" ]]; then
-        ACTUAL_DB_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "valkey-node1" | head -1)
+        ACTUAL_DB_CONTAINER=$(podman ps --format "{{.Names}}" | grep -E "valkey-node1" | head -1)
       fi
 
       if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
@@ -183,8 +184,8 @@ verify_database_connection() {
 # --- Ensure Thorough Cleanup Before Starting ---
 log "Performing thorough cleanup before starting benchmark..."
 # Clean up any containers with benchmark names
-docker ps -a --filter "name=running-benchmark-" --format "{{.Names}}" | xargs -r docker rm -f || true
-docker ps -a --filter "name=benchmark-loadtest" --format "{{.Names}}" | xargs -r docker rm -f || true
+podman ps -a --filter "name=running-benchmark-" --format "{{.Names}}" | xargs -r podman rm -f || true
+podman ps -a --filter "name=benchmark-loadtest" --format "{{.Names}}" | xargs -r podman rm -f || true
 
 log "Benchmark cleanup completed"
 
@@ -249,12 +250,9 @@ log "- Request types: ${request_types[*]}"
 log "- Rate limiter types: ${rate_limiter_types[*]}"
 log "- Results will be saved to: ${RESULTS_DIR_HOST}"
 
-# --- Build Docker Images ---
-
-log "Building server Docker image ($SERVER_IMAGE_TAG)..."
-docker build -t "$SERVER_IMAGE_TAG" -f Dockerfile.server .
-log "Building loadtest Docker image ($LOADTEST_IMAGE_TAG)..."
-docker build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
+# --- Build Docker Images ---    log "Building server Docker image ($SERVER_IMAGE_TAG)..."
+    podman build -t "$SERVER_IMAGE_TAG" -f Dockerfile.server .    log "Building loadtest Docker image ($LOADTEST_IMAGE_TAG)..."
+    podman build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
 
 # --- Main Test Loop ---
 
@@ -527,6 +525,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     fi
 
     docker run -d --name "$SERVER_CONTAINER_NAME" \
+        --restart=on-failure:3 \
         --network="$BENCHMARK_NETWORK" \
         -p "${DEFAULT_SERVER_PORT}:${DEFAULT_SERVER_PORT}" \
         "${server_env_vars[@]}" \
