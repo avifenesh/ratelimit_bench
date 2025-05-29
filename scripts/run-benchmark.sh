@@ -45,12 +45,27 @@ DEFAULT_RATE_LIMITER_TYPES=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cl
 # Parse command line arguments (unchanged)
 
 # Use environment variables if set, otherwise positional args, otherwise defaults
-duration=${BENCHMARK_DURATION:-${1:-$DEFAULT_DURATION}}
-concurrency_levels=(${2:-${DEFAULT_CONCURRENCY_LEVELS[@]}})
-request_types_str=${BENCHMARK_REQUEST_TYPES:-${3:-"${DEFAULT_REQUEST_TYPES[*]}"}}
+duration=${BENCHMARK_DURATION:-${DURATION:-${1:-$DEFAULT_DURATION}}}
+
+# Handle concurrency levels properly
+if [ -n "$CONCURRENCY" ]; then
+    concurrency_levels=($CONCURRENCY)
+elif [ -n "$2" ]; then
+    concurrency_levels=($2)
+else
+    concurrency_levels=(${DEFAULT_CONCURRENCY_LEVELS[@]})
+fi
+
+request_types_str=${BENCHMARK_REQUEST_TYPES:-${REQUEST_TYPES:-${3:-"${DEFAULT_REQUEST_TYPES[*]}"}}}
 # Split the string into an array
 read -r -a request_types <<< "$request_types_str"
-rate_limiter_types=(${4:-${DEFAULT_RATE_LIMITER_TYPES[@]}})
+
+# Handle rate limiter types properly
+if [ -n "$4" ]; then
+    rate_limiter_types=($4)
+else
+    rate_limiter_types=(${DEFAULT_RATE_LIMITER_TYPES[@]})
+fi
 
 # --- Helper Functions ---
 
@@ -250,16 +265,19 @@ log "- Request types: ${request_types[*]}"
 log "- Rate limiter types: ${rate_limiter_types[*]}"
 log "- Results will be saved to: ${RESULTS_DIR_HOST}"
 
-# --- Build Docker Images ---    log "Building server Docker image ($SERVER_IMAGE_TAG)..."
-    podman build -t "$SERVER_IMAGE_TAG" -f Dockerfile.server .    log "Building loadtest Docker image ($LOADTEST_IMAGE_TAG)..."
-    podman build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
+# --- Build Docker Images ---
+log "Building server Docker image ($SERVER_IMAGE_TAG)..."
+podman build -t "$SERVER_IMAGE_TAG" -f Dockerfile.server .
+
+log "Building loadtest Docker image ($LOADTEST_IMAGE_TAG)..."
+podman build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
 
 # --- Main Test Loop ---
 
 CURRENT_COMPOSE_FILE=""
 if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
-    log "Creating Docker network for benchmarks..."
-    docker network create "$BENCHMARK_NETWORK" 2>/dev/null || log "Network $BENCHMARK_NETWORK already exists"
+    log "Creating Podman network for benchmarks..."
+    podman network create "$BENCHMARK_NETWORK" 2>/dev/null || log "Network $BENCHMARK_NETWORK already exists"
 fi
 
 for rate_limiter_type in "${rate_limiter_types[@]}"; do
@@ -390,7 +408,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 log "Database container status:"
                 docker ps | grep "$ACTUAL_DB_CONTAINER" || true
                 if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
-                    docker logs "$ACTUAL_DB_CONTAINER" | tail -20
+                    podman logs "$ACTUAL_DB_CONTAINER" | tail -20
                 fi
             fi
         fi
@@ -479,14 +497,14 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     if [[ "$use_cluster" == "true" ]]; then
         log "Setting cluster environment variables..."
         server_env_vars+=(-e "USE_${db_tech^^}_CLUSTER=true")
+        PROJECT_PREFIX=${COMPOSE_PROJECT_NAME:-ratelimit_bench}
 
         if [[ "$db_tech" == "redis" ]]; then
-            REDIS_CLUSTER_NODES="redis-node1:6379,redis-node2:6379,redis-node3:6379,redis-node4:6379,redis-node5:6379,redis-node6:6379"
+            REDIS_CLUSTER_NODES="${PROJECT_PREFIX}-redis-node1:6380,${PROJECT_PREFIX}-redis-node2:6381,${PROJECT_PREFIX}-redis-node3:6382,${PROJECT_PREFIX}-redis-node4:6383,${PROJECT_PREFIX}-redis-node5:6384,${PROJECT_PREFIX}-redis-node6:6385"
             server_env_vars+=(-e "REDIS_CLUSTER_NODES=${REDIS_CLUSTER_NODES}")
             log "REDIS_CLUSTER_NODES set to: ${REDIS_CLUSTER_NODES}"
         elif [[ "$db_tech" == "valkey" ]]; then
-            PROJECT_PREFIX=${COMPOSE_PROJECT_NAME:-ratelimit_bench}
-            VALKEY_CLUSTER_NODES="${PROJECT_PREFIX}-valkey-node1:8080,${PROJECT_PREFIX}-valkey-node2:8080,${PROJECT_PREFIX}-valkey-node3:8080,${PROJECT_PREFIX}-valkey-node4:8080,${PROJECT_PREFIX}-valkey-node5:8080,${PROJECT_PREFIX}-valkey-node6:8080"
+            VALKEY_CLUSTER_NODES="${PROJECT_PREFIX}-valkey-node1:7000,${PROJECT_PREFIX}-valkey-node2:7001,${PROJECT_PREFIX}-valkey-node3:7002,${PROJECT_PREFIX}-valkey-node4:7003,${PROJECT_PREFIX}-valkey-node5:7004,${PROJECT_PREFIX}-valkey-node6:7005"
             server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
             log "VALKEY_CLUSTER_NODES set to: ${VALKEY_CLUSTER_NODES}"
         fi
@@ -524,7 +542,13 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         log "Setting default COMPUTATION_COMPLEXITY=10"
     fi
 
-    docker run -d --name "$SERVER_CONTAINER_NAME" \
+    # Debug: print the server env vars before using them
+    log "Debug: server_env_vars array contents:"
+    for i in "${!server_env_vars[@]}"; do
+        log "  [$i]: ${server_env_vars[$i]}"
+    done
+    
+    podman run -d --name "$SERVER_CONTAINER_NAME" \
         --restart=on-failure:3 \
         --network="$BENCHMARK_NETWORK" \
         -p "${DEFAULT_SERVER_PORT}:${DEFAULT_SERVER_PORT}" \
@@ -537,7 +561,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     elapsed=0
     server_ready=false
     while [ $elapsed -lt $max_wait ]; do
-        if docker logs "$SERVER_CONTAINER_NAME" 2>&1 | grep -q "Server listening on http://0.0.0.0:${DEFAULT_SERVER_PORT}"; then
+        if podman logs "$SERVER_CONTAINER_NAME" 2>&1 | grep -q "Server listening on http://0.0.0.0:${DEFAULT_SERVER_PORT}"; then
             log "Server container is ready."
             server_ready=true
             break
@@ -551,7 +575,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         log "ERROR: Server container failed to start within $max_wait seconds."
         
         log "Server container logs:"
-        docker logs "$SERVER_CONTAINER_NAME" || true
+        podman logs "$SERVER_CONTAINER_NAME" || true
         
         log "Network information:"
         docker network inspect "$BENCHMARK_NETWORK" || true
@@ -675,11 +699,11 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                     # Ensure any existing container with similar name is removed first
                     docker rm -f "${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" > /dev/null 2>&1 || true
 
-                    # Print the exact docker run command for debugging
-                    log "Running warmup with command: docker run --name $warmup_container_name --network=$BENCHMARK_NETWORK ${warmup_env_vars[*]} $LOADTEST_IMAGE_TAG"
+                    # Print the exact podman run command for debugging
+                    log "Running warmup with command: podman run --name $warmup_container_name --network=$BENCHMARK_NETWORK ${warmup_env_vars[*]} $LOADTEST_IMAGE_TAG"
 
                     # Ensure expansion treats each element as a separate argument
-                    docker run --name "$warmup_container_name" \
+                    podman run --name "$warmup_container_name" \
                         --network="$BENCHMARK_NETWORK" \
                         "${warmup_env_vars[@]}" \
                         "$LOADTEST_IMAGE_TAG" > "${RESULTS_DIR_HOST}/${test_id}_warmup.log" 2>&1
@@ -688,7 +712,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                     if [ $warmup_exit_code -ne 0 ]; then
                         log "ERROR: Warmup container failed with exit code $warmup_exit_code."
                         log "=== Warmup container logs ==="
-                        docker logs "$warmup_container_name" 2>&1 | tee -a "$LOG_FILE" || log "Could not retrieve logs for failed warmup container."
+                        podman logs "$warmup_container_name" 2>&1 | tee -a "$LOG_FILE" || log "Could not retrieve logs for failed warmup container."
                         log "=== End warmup container logs ==="
                         log "Network diagnostic information:"
                         docker network inspect "$BENCHMARK_NETWORK" | grep -A 10 "Containers" | tee -a "$LOG_FILE"
@@ -714,7 +738,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 
                 # Ensure expansion treats each element as a separate argument
                 # Redirect stdout/stderr to the container log file
-                docker run --name "$loadtest_container_name" \
+                podman run --name "$loadtest_container_name" \
                     --network="$BENCHMARK_NETWORK" \
                     "${loadtest_env_vars[@]}" \
                     "$LOADTEST_IMAGE_TAG" > "$container_log_file" 2>&1

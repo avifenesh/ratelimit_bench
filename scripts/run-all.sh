@@ -127,8 +127,9 @@ start_containers() {
   
   log "Starting Valkey cluster..."
   
-  # Create a pod for Valkey cluster
-  podman pod create --name valkey-cluster-pod --network benchmark-network
+  # Create a pod for Valkey cluster with port mappings
+  podman pod create --name valkey-cluster-pod --network benchmark-network \
+    -p 7000:7000 -p 7001:7001 -p 7002:7002 -p 7003:7003 -p 7004:7004 -p 7005:7005
   
   # Start Valkey cluster nodes
   for i in {1..6}; do
@@ -137,13 +138,12 @@ start_containers() {
       --name ratelimit_bench-valkey-node$i \
       --pod valkey-cluster-pod \
       --restart on-failure:3 \
-      -p $port:6379 \
       --ulimit nproc=65535 \
       --ulimit nofile=65535:65535 \
       --cpus 1 \
       --memory 1G \
       valkey/valkey:8.1 \
-      valkey-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
+      valkey-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
   done
   
   # Wait for nodes to start
@@ -174,8 +174,9 @@ start_containers() {
   
   log "Starting Redis cluster..."
   
-  # Create a pod for Redis cluster
-  podman pod create --name redis-cluster-pod --network benchmark-network
+  # Create a pod for Redis cluster with port mappings
+  podman pod create --name redis-cluster-pod --network benchmark-network \
+    -p 6380:6380 -p 6381:6381 -p 6382:6382 -p 6383:6383 -p 6384:6384 -p 6385:6385
   
   # Start Redis cluster nodes
   for i in {1..6}; do
@@ -184,13 +185,12 @@ start_containers() {
       --name ratelimit_bench-redis-node$i \
       --pod redis-cluster-pod \
       --restart on-failure:3 \
-      -p $port:6379 \
       --ulimit nproc=65535 \
       --ulimit nofile=65535:65535 \
       --cpus 1 \
       --memory 1G \
       redis:8 \
-      redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
+      redis-server --port $port --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly no --save ""
   done
   
   # Wait for nodes to start
@@ -213,7 +213,7 @@ start_containers() {
   # Verify network connectivity
   log "Verifying network connectivity between containers..."
   # Check if Valkey container is accessible
-  podman exec benchmark-valkey redis-cli PING 2>/dev/null | grep -q "PONG" && \
+  podman exec benchmark-valkey valkey-cli PING 2>/dev/null | grep -q "PONG" && \
     log "Valkey container is accessible" || log "WARNING: Valkey container is not responding"
   
   # Check if Redis container is accessible
