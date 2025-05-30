@@ -61,7 +61,10 @@ request_types_str=${BENCHMARK_REQUEST_TYPES:-${REQUEST_TYPES:-${3:-"${DEFAULT_RE
 read -r -a request_types <<< "$request_types_str"
 
 # Handle rate limiter types properly
-if [ -n "$4" ]; then
+if [ -n "$RATE_LIMITER_TYPES" ]; then
+    # Convert space-separated string to array
+    read -r -a rate_limiter_types <<< "$RATE_LIMITER_TYPES"
+elif [ -n "$4" ]; then
     rate_limiter_types=($4)
 else
     rate_limiter_types=(${DEFAULT_RATE_LIMITER_TYPES[@]})
@@ -500,11 +503,11 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         PROJECT_PREFIX=${COMPOSE_PROJECT_NAME:-ratelimit_bench}
 
         if [[ "$db_tech" == "redis" ]]; then
-            REDIS_CLUSTER_NODES="${PROJECT_PREFIX}-redis-node1:6380,${PROJECT_PREFIX}-redis-node2:6381,${PROJECT_PREFIX}-redis-node3:6382,${PROJECT_PREFIX}-redis-node4:6383,${PROJECT_PREFIX}-redis-node5:6384,${PROJECT_PREFIX}-redis-node6:6385"
+            REDIS_CLUSTER_NODES="redis-cluster-pod:6380,redis-cluster-pod:6381,redis-cluster-pod:6382,redis-cluster-pod:6383,redis-cluster-pod:6384,redis-cluster-pod:6385"
             server_env_vars+=(-e "REDIS_CLUSTER_NODES=${REDIS_CLUSTER_NODES}")
             log "REDIS_CLUSTER_NODES set to: ${REDIS_CLUSTER_NODES}"
         elif [[ "$db_tech" == "valkey" ]]; then
-            VALKEY_CLUSTER_NODES="${PROJECT_PREFIX}-valkey-node1:7000,${PROJECT_PREFIX}-valkey-node2:7001,${PROJECT_PREFIX}-valkey-node3:7002,${PROJECT_PREFIX}-valkey-node4:7003,${PROJECT_PREFIX}-valkey-node5:7004,${PROJECT_PREFIX}-valkey-node6:7005"
+            VALKEY_CLUSTER_NODES="valkey-cluster-pod:7000,valkey-cluster-pod:7001,valkey-cluster-pod:7002,valkey-cluster-pod:7003,valkey-cluster-pod:7004,valkey-cluster-pod:7005"
             server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
             log "VALKEY_CLUSTER_NODES set to: ${VALKEY_CLUSTER_NODES}"
         fi

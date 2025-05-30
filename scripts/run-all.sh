@@ -41,35 +41,37 @@ calculate_duration() {
 }
 
 # Command line argument variables
-ARG_CLIENT=""
+ARG_CLIENTS=""
 ARG_WORKLOAD=""
-ARG_DURATION=""
+ARG_DURATION_MODE=""
 ARG_CONCURRENCY=""
 
-# Create directory structure before any logging happens
-mkdir -p "$RESULTS_DIR"
-MKDIR_EXIT_CODE=$?
-echo "mkdir exit code: ${MKDIR_EXIT_CODE}"
-if [ "$MKDIR_EXIT_CODE" -ne 0 ]; then
-  echo "Error creating directory: $RESULTS_DIR"
-  exit 1
-fi
+# Function to create directories and initialize logging
+initialize_directories() {
+  # Create directory structure
+  mkdir -p "$RESULTS_DIR"
+  MKDIR_EXIT_CODE=$?
+  echo "mkdir exit code: ${MKDIR_EXIT_CODE}"
+  if [ "$MKDIR_EXIT_CODE" -ne 0 ]; then
+    echo "Error creating directory: $RESULTS_DIR"
+    exit 1
+  fi
 
-LOG_FILE="${RESULTS_DIR}/full_benchmark.log"
-echo "LOG_FILE: ${LOG_FILE}"
-touch "$LOG_FILE"
-TOUCH_EXIT_CODE=$?
-if [ "$TOUCH_EXIT_CODE" -ne 0 ]; then
-    echo "Error: Failed to create log file '$LOG_FILE' with touch. Exit code: $TOUCH_EXIT_CODE" >&2
-    # Add a check to see if the directory exists at this point
-    if [ ! -d "$RESULTS_DIR" ]; then
-        echo "Error: Directory '$RESULTS_DIR' does not exist when trying to touch the log file." >&2
-    else
-        echo "Error: Directory '$RESULTS_DIR' exists, but touch failed (Permissions issue?)" >&2
-    fi
-    exit 1 # Exit explicitly if touch fails
-fi
-
+  LOG_FILE="${RESULTS_DIR}/full_benchmark.log"
+  echo "LOG_FILE: ${LOG_FILE}"
+  touch "$LOG_FILE"
+  TOUCH_EXIT_CODE=$?
+  if [ "$TOUCH_EXIT_CODE" -ne 0 ]; then
+      echo "Error: Failed to create log file '$LOG_FILE' with touch. Exit code: $TOUCH_EXIT_CODE" >&2
+      # Add a check to see if the directory exists at this point
+      if [ ! -d "$RESULTS_DIR" ]; then
+          echo "Error: Directory '$RESULTS_DIR' does not exist when trying to touch the log file." >&2
+      else
+          echo "Error: Directory '$RESULTS_DIR' exists, but touch failed (Permissions issue?)" >&2
+      fi
+      exit 1 # Exit explicitly if touch fails
+  fi
+}
 
 # --- Helper Functions ---
 log() {
@@ -586,142 +588,13 @@ set_config_from_args() {
 should_run_interactive() {
   [ -z "$ARG_CLIENTS" ] && [ -z "$ARG_WORKLOAD" ] && [ -z "$ARG_CONCURRENCY" ] && [ -z "$ARG_DURATION_MODE" ]
 }
-show_help() {
-  echo "Usage: $0 [OPTIONS]"
-  echo
-  echo "Options:"
-  echo "  --client CLIENT        Specify client(s) to test:"
-  echo "                         valkey-glide, iovalkey, ioredis"
-  echo "                         Add ':cluster' for cluster mode (e.g., valkey-glide:cluster)"
-  echo "                         Use 'all', 'standalone', or 'cluster' for groups"
-  echo "  --workload WORKLOAD    Specify workload type: light, heavy, or both"
-  echo "  --duration DURATIONS   Specify duration(s) in seconds (space-separated)"
-  echo "  --concurrency LEVELS   Specify concurrency level(s) (space-separated)"
-  echo "  --help                 Show this help message"
-  echo
-  echo "Examples:"
-  echo "  $0 --client valkey-glide --workload light --duration \"30 120\" --concurrency \"50 100\""
-  echo "  $0 --client all --workload both --duration 30 --concurrency 50"
-  echo "  $0 --client standalone --workload heavy --duration 60 --concurrency \"100 500\""
-  echo
-  echo "Interactive mode:"
-  echo "  $0    (run without arguments for interactive configuration)"
-}
 
-parse_arguments() {
-  while [[ $# -gt 0 ]]; do
-    case $1 in
-      --client)
-        ARG_CLIENT="$2"
-        shift 2
-        ;;
-      --workload)
-        ARG_WORKLOAD="$2"
-        shift 2
-        ;;
-      --duration)
-        ARG_DURATION="$2"
-        shift 2
-        ;;
-      --concurrency)
-        ARG_CONCURRENCY="$2"
-        shift 2
-        ;;
-      --help|-h)
-        show_help
-        exit 0
-        ;;
-      *)
-        echo "Unknown option: $1"
-        show_help
-        exit 1
-        ;;
-    esac
-  done
-}
 
 configure_benchmark() {
-  # If arguments were provided, use non-interactive mode
-  if [ -n "$ARG_CLIENT" ] || [ -n "$ARG_WORKLOAD" ] || [ -n "$ARG_DURATION" ] || [ -n "$ARG_CONCURRENCY" ]; then
-    log "Running in non-interactive mode with provided arguments..."
-    
-    # Set client types
-    case $ARG_CLIENT in
-      valkey-glide)
-        SELECTED_CLIENTS="valkey-glide"
-        ;;
-      iovalkey)
-        SELECTED_CLIENTS="iovalkey"
-        ;;
-      ioredis)
-        SELECTED_CLIENTS="ioredis"
-        ;;
-      valkey-glide:cluster)
-        SELECTED_CLIENTS="valkey-glide:cluster"
-        ;;
-      iovalkey:cluster)
-        SELECTED_CLIENTS="iovalkey:cluster"
-        ;;
-      ioredis:cluster)
-        SELECTED_CLIENTS="ioredis:cluster"
-        ;;
-      standalone)
-        SELECTED_CLIENTS="valkey-glide iovalkey ioredis"
-        ;;
-      cluster)
-        SELECTED_CLIENTS="valkey-glide:cluster iovalkey:cluster ioredis:cluster"
-        ;;
-      all|"")
-        SELECTED_CLIENTS="valkey-glide iovalkey ioredis valkey-glide:cluster iovalkey:cluster ioredis:cluster"
-        ;;
-      *)
-        # Custom client list
-        SELECTED_CLIENTS="$ARG_CLIENT"
-        ;;
-    esac
-    
-    # Set workload type
-    case $ARG_WORKLOAD in
-      light)
-        RUN_LIGHT_WORKLOAD=true
-        RUN_HEAVY_WORKLOAD=false
-        ;;
-      heavy)
-        RUN_LIGHT_WORKLOAD=false
-        RUN_HEAVY_WORKLOAD=true
-        ;;
-      both|"")
-        RUN_LIGHT_WORKLOAD=true
-        RUN_HEAVY_WORKLOAD=true
-        ;;
-      *)
-        log_error "Invalid workload type: $ARG_WORKLOAD"
-        exit 1
-        ;;
-    esac
-    
-    # Set durations
-    BENCHMARK_DURATIONS="${ARG_DURATION:-30 120}"
-    
-    # Set concurrency
-    BENCHMARK_CONCURRENCY="${ARG_CONCURRENCY:-50 100 500}"
-    
-    # Show configuration
-    echo "==============================================="
-    echo "Non-Interactive Benchmark Configuration:"
-    echo "==============================================="
-    echo "Clients: $SELECTED_CLIENTS"
-    echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
-    echo "Durations: $BENCHMARK_DURATIONS seconds"
-    echo "Concurrency: $BENCHMARK_CONCURRENCY"
-    echo "==============================================="
-    
-    return
-  fi
-  
-  # Interactive mode
-  # Clear screen and display header
-  clear
+  # Check if we should run in interactive mode
+  if should_run_interactive; then
+    # Interactive mode
+    clear
   echo "==============================================="
   echo "  Valkey vs Redis Rate Limiter Benchmark Suite "
   echo "==============================================="
@@ -886,7 +759,7 @@ configure_benchmark() {
   echo "Clients: $SELECTED_CLIENTS"
   echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
   if [ "$USE_DYNAMIC_DURATION" = "true" ]; then
-    echo "Duration: Dynamic (120s for 50-100c, 180s for 500-1000c, +30s for cluster)"
+    echo "Duration: Dynamic (120s for ≤100c, 180s for >100c, +30s for cluster)"
   else
     echo "Duration: Fixed ${FIXED_DURATION}s"
   fi
@@ -900,10 +773,23 @@ configure_benchmark() {
     log "Benchmark cancelled by user."
     exit 0
   fi
+  else
+    # Non-interactive mode - configuration already set by set_config_from_args
+    echo "==============================================="
+    echo "Non-Interactive Benchmark Configuration:"
+    echo "==============================================="
+    echo "Clients: $SELECTED_CLIENTS"
+    echo "Workloads: $([ "$RUN_LIGHT_WORKLOAD" = "true" ] && echo -n "light ")$([ "$RUN_HEAVY_WORKLOAD" = "true" ] && echo -n "heavy")"
+    if [ "$USE_DYNAMIC_DURATION" = "true" ]; then
+      echo "Duration: Dynamic (120s for ≤100c, 180s for >100c, +30s for cluster)"
+    else
+      echo "Duration: Fixed ${FIXED_DURATION}s"
+    fi
+    echo "Concurrency: $BENCHMARK_CONCURRENCY"
+    echo "==============================================="
+    echo
+  fi
 }
-
-# Parse command line arguments
-parse_arguments "$@"
 
 # Parse command line arguments first
 parse_arguments "$@"
@@ -922,6 +808,9 @@ fi
 if [ "$USE_DYNAMIC_DURATION" = false ] && [ -z "$FIXED_DURATION" ]; then
   USE_DYNAMIC_DURATION=true
 fi
+
+# Initialize directories and logging after parsing arguments
+initialize_directories
 
 # Set configuration from arguments if provided, otherwise run interactive mode
 if should_run_interactive; then
