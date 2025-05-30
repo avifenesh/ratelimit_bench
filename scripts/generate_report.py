@@ -19,6 +19,7 @@ import re
 import math
 import numpy as np # Import numpy for NaN handling
 import traceback # Import traceback for detailed error logging
+import shutil
 
 DEFAULT_RESULTS_DIR = "./results/latest"
 REPORT_SUBDIR = "report"
@@ -345,7 +346,7 @@ def collect_all_error_data(results_dir):
     """Collect error data from all runs, not just median runs."""
     print("Collecting error data from all runs...")
     all_error_data = []
-    
+
     # Find all JSON result files
     all_files = []
     try:
@@ -355,22 +356,22 @@ def collect_all_error_data(results_dir):
     except OSError as e:
         print(f"Error reading results directory '{results_dir}': {e}")
         return []
-        
+
     for filepath in all_files:
         filename = os.path.basename(filepath)
         try:
             # Parse filename to get metadata
             implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename)
-            
+
             # Read the JSON file
             with open(filepath, 'r') as f:
                 result_json = json.load(f)
-                
+
             # Extract error data
             errors = result_json.get('errors', 0)
             timeouts = result_json.get('timeouts', 0)
             total_errors = errors + timeouts
-            
+
             # Add to error data collection
             all_error_data.append({
                 "Client": client_name,
@@ -381,22 +382,24 @@ def collect_all_error_data(results_dir):
                 "Timeouts": int(timeouts) if isinstance(timeouts, (int, float)) else 0,
                 "TotalErrors": int(total_errors) if isinstance(total_errors, (int, float)) else 0,
             })
-            
+
         except Exception as e:
             print(f"Warning: Error processing file {filename} for error data: {e}")
-            
+
     return all_error_data
 
 
-def generate_html_report(df, report_dir, results_dir):
+def generate_html_report(
+    df, report_dir, results_dir, comparison_data=None, trends=None
+):
     """Generates the HTML report file with corrected structure and styles."""
     report_path = os.path.join(report_dir, REPORT_HTML_FILENAME)
     print(f"Generating HTML report at: {report_path}")
-    
+
     # Collect error data from all runs
     all_error_data = collect_all_error_data(results_dir)
     error_df = pd.DataFrame(all_error_data) if all_error_data else pd.DataFrame()
-    
+
     # Sort data by configuration and then order clients as: valkey-glide, iovalkey, ioredis
     # Create a client priority column for fine-grained sorting
     def get_client_priority(client):
@@ -408,9 +411,9 @@ def generate_html_report(df, report_dir, results_dir):
         elif 'ioredis' in client_lower:
             return 3
         return 4  # Any other clients
-        
+
     df['ClientPriority'] = df['Client'].apply(get_client_priority)
-    
+
     # Sort by configuration components first, then by the client priority (valkey-glide, iovalkey, ioredis)
     df_display = df.sort_values(
         by=['RequestType', 'Mode', 'Concurrency', 'ClientPriority'],
@@ -675,26 +678,28 @@ def generate_html_report(df, report_dir, results_dir):
         # Make sure all columns exist, add missing ones with NaN
         df_table_display_base = df_display.reindex(columns=table_columns, fill_value=np.nan).copy()
 
-
         # Format numbers for better readability in the table
         # Create a formatted copy
         df_table_display_formatted = df_table_display_base.copy()
         # Use pd.isna to check for NaN before formatting
         for col in ["Latency_Avg", "Latency_P50", "Latency_P99", "CPUUsage"]:
-             if col in df_table_display_formatted.columns:
+            if col in df_table_display_formatted.columns:
                 df_table_display_formatted[col] = df_table_display_formatted[col].map(lambda x: f'{x:,.2f}' if pd.notna(x) else 'N/A')
         # --- Format ReqPerSec as integer ---
         if "ReqPerSec" in df_table_display_formatted.columns:
-             df_table_display_formatted["ReqPerSec"] = df_table_display_formatted["ReqPerSec"].map(lambda x: f'{int(float(x)):,}' if pd.notna(x) else 'N/A')
+            df_table_display_formatted["ReqPerSec"] = df_table_display_formatted[
+                "ReqPerSec"
+            ].map(lambda x: f"{int(float(x)):,}" if pd.notna(x) else "N/A")
         # --- End ReqPerSec formatting ---
         for col in ["RateLimitHits", "MemoryUsage"]:
-             if col in df_table_display_formatted.columns:
-                 # Format MemoryUsage potentially as float then int for display
-                 df_table_display_formatted[col] = df_table_display_formatted[col].map(lambda x: f'{int(float(x)):,}' if pd.notna(x) else 'N/A')
+            if col in df_table_display_formatted.columns:
+                # Format MemoryUsage potentially as float then int for display
+                df_table_display_formatted[col] = df_table_display_formatted[col].map(
+                    lambda x: f"{int(float(x)):,}" if pd.notna(x) else "N/A"
+                )
         for col in ["Concurrency", "Duration"]:
-             if col in df_table_display_formatted.columns:
+            if col in df_table_display_formatted.columns:
                 df_table_display_formatted[col] = df_table_display_formatted[col].map(lambda x: f'{int(x)}' if pd.notna(x) else 'N/A')
-
 
         for mode in modes:
             # Filter the *formatted* dataframe for the current mode
@@ -709,8 +714,7 @@ def generate_html_report(df, report_dir, results_dir):
                 html_content += mode_df_formatted.to_html(index=False, classes='results-table', border=0, na_rep='N/A', escape=False)
                 html_content += '</div>' # Close table-container
             else:
-                 html_content += f'<h3>Mode: {mode.capitalize()}</h3><p>No data available for this mode.</p>'
-
+                html_content += f"<h3>Mode: {mode.capitalize()}</h3><p>No data available for this mode.</p>"
 
     html_content += """
         <h2>Performance Charts</h2>
@@ -718,27 +722,27 @@ def generate_html_report(df, report_dir, results_dir):
 
     # Add charts grouped by request type and mode (checking for generation success)
     if not charts:
-         html_content += "<p>No charts could be generated.</p>"
+        html_content += "<p>No charts could be generated.</p>"
     else:
         for req_type in request_types:
             for mode in modes:
                 key_prefix = f"{req_type}_{mode}"
                 title_suffix = f" ({req_type.capitalize()} Workload, {mode.capitalize()} Mode)"
                 html_content += f"<h2>Charts for {title_suffix}</h2>"
-                
+
                 # Add error summary for this workload and mode
                 html_content += "<div class='error-summary'>"
                 html_content += "<h3>Error Summary (Across All Runs)</h3>"
                 html_content += "<table class='error-table'>"
                 html_content += "<tr><th>Client</th><th>Total Errors</th><th>Connection Errors</th><th>Timeouts</th></tr>"
-                
+
                 # Get data for this workload and mode from the complete error dataset
                 if not error_df.empty:
                     workload_mode_data = error_df[
                         (error_df['RequestType'] == req_type) & 
                         (error_df['Mode'] == mode)
                     ].copy()
-                    
+
                     # Sort clients in our desired order
                     def get_client_priority(client):
                         client_lower = str(client).lower()
@@ -749,23 +753,23 @@ def generate_html_report(df, report_dir, results_dir):
                         elif 'ioredis' in client_lower:
                             return 3
                         return 4
-                    
+
                     workload_mode_data['ClientPriority'] = workload_mode_data['Client'].apply(get_client_priority)
                     workload_mode_data = workload_mode_data.sort_values('ClientPriority')
-                    
+
                     # Calculate total errors per client for this workload/mode
                     client_errors = workload_mode_data.groupby('Client').agg({
                         'TotalErrors': 'sum',
                         'Errors': 'sum',
                         'Timeouts': 'sum'
                     }).reset_index()
-                    
+
                     # Add a row for each client
                     for _, row in client_errors.iterrows():
                         html_content += f"<tr><td>{row['Client']}</td><td>{int(row['TotalErrors'])}</td><td>{int(row['Errors'])}</td><td>{int(row['Timeouts'])}</td></tr>"
                 else:
                     html_content += "<tr><td colspan='4'>No error data available</td></tr>"
-                
+
                 html_content += "</table>"
                 html_content += "</div>"
 
@@ -813,6 +817,126 @@ def generate_html_report(df, report_dir, results_dir):
                         html_content += temp_group_html # Add the generated chart containers
                         html_content += "</div>" # Close chart-grid for this group
 
+    # Add comparison and trends sections if available
+    if comparison_data:
+        html_content += """
+        <h2>Performance Comparison</h2>
+        <p>This section compares performance across multiple benchmark runs.</p>
+        <div class="table-container">
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Run Timestamp</th>
+                        <th>Date/Time</th>
+                        <th>Configurations</th>
+                        <th>Avg Throughput</th>
+                        <th>Max Throughput</th>
+                        <th>Avg Latency</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for run_data in comparison_data:
+            df_run = run_data["df"]
+            html_content += f"""
+                    <tr>
+                        <td>{run_data['timestamp']}</td>
+                        <td>{run_data['datetime'].strftime('%Y-%m-%d %H:%M:%S')}</td>
+                        <td>{len(df_run)}</td>
+                        <td>{df_run['ReqPerSec'].mean():.2f}</td>
+                        <td>{df_run['ReqPerSec'].max():.2f}</td>
+                        <td>{df_run['Latency_Avg'].mean():.2f} ms</td>
+                    </tr>
+            """
+
+        html_content += """
+                </tbody>
+            </table>
+        </div>
+        """
+
+    if trends:
+        html_content += """
+        <h2>Performance Trends Analysis</h2>
+        <p>This section shows performance trends and changes across multiple benchmark runs.</p>
+        <div class="table-container">
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Configuration</th>
+                        <th>Change (%)</th>
+                        <th>Trend</th>
+                        <th>Stability</th>
+                        <th>Data Points</th>
+                        <th>Avg Throughput</th>
+                        <th>Best</th>
+                        <th>Worst</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        # Sort trends by performance change (worst declines first, then best improvements)
+        sorted_trends = sorted(
+            trends.values(), key=lambda x: x["throughput_change_percent"]
+        )
+
+        for trend in sorted_trends:
+            config_display = trend["config"].replace("_", " ").title()
+            change_class = ""
+            if trend["throughput_change_percent"] > 5:
+                change_class = "style='color: green; font-weight: bold;'"
+            elif trend["throughput_change_percent"] < -5:
+                change_class = "style='color: red; font-weight: bold;'"
+
+            trend_icon = (
+                "↗️"
+                if trend["trend_direction"] == "improving"
+                else "↘️" if trend["trend_direction"] == "declining" else "➡️"
+            )
+
+            html_content += f"""
+                    <tr>
+                        <td>{config_display}</td>
+                        <td {change_class}>{trend['throughput_change_percent']:+.1f}%</td>
+                        <td>{trend_icon} {trend['trend_direction'].title()}</td>
+                        <td>{trend['stability'].title()}</td>
+                        <td>{trend['data_points']}</td>
+                        <td>{trend['avg_throughput']:.2f}</td>
+                        <td>{trend['best_throughput']:.2f}</td>
+                        <td>{trend['worst_throughput']:.2f}</td>
+                    </tr>
+            """
+
+        html_content += """
+                </tbody>
+            </table>
+        </div>
+        """
+
+        # Add trend charts if they exist
+        trend_chart_files = [
+            f
+            for f in os.listdir(report_dir)
+            if f.startswith("trends_") and f.endswith(".png")
+        ]
+        if trend_chart_files:
+            html_content += """
+            <h3>Trend Visualization</h3>
+            <div class="chart-grid">
+            """
+            for chart_file in sorted(trend_chart_files):
+                chart_name = (
+                    chart_file.replace("trends_", "").replace(".png", "").title()
+                )
+                html_content += f"""
+                <div class="chart-container">
+                    <h4>Performance Trends: {chart_name}</h4>
+                    <img src="{chart_file}" alt="Trend chart for {chart_name}" style="max-width: 100%; height: auto;">
+                </div>
+                """
+            html_content += "</div>"
 
     # *** Ensure correct closing structure ***
     html_content += """
@@ -831,26 +955,776 @@ def generate_html_report(df, report_dir, results_dir):
         print(f"Error writing HTML report to {report_path}: {e}")
 
 
+def find_comparison_directories(results_base_dir):
+    """Find all timestamped result directories for comparison analysis."""
+    comparison_dirs = []
+
+    if not os.path.isdir(results_base_dir):
+        return comparison_dirs
+
+    for item in os.listdir(results_base_dir):
+        item_path = os.path.join(results_base_dir, item)
+        if os.path.isdir(item_path) and re.match(r"\d{8}_\d{6}", item):
+            # Check if this directory has JSON files
+            json_files = [f for f in os.listdir(item_path) if f.endswith(".json")]
+            if json_files:
+                comparison_dirs.append(
+                    {
+                        "path": item_path,
+                        "timestamp": item,
+                        "datetime": datetime.strptime(item, "%Y%m%d_%H%M%S"),
+                        "json_count": len(json_files),
+                    }
+                )
+
+    # Sort by timestamp (oldest first)
+    comparison_dirs.sort(key=lambda x: x["datetime"])
+    return comparison_dirs
+
+
+def calculate_performance_trends(comparison_data):
+    """Calculate performance trends across multiple benchmark runs."""
+    trends = {}
+
+    if len(comparison_data) < 2:
+        return trends
+
+    # Group by configuration for trend analysis
+    config_groups = {}
+    for run_data in comparison_data:
+        for _, row in run_data["df"].iterrows():
+            config_key = f"{row['Client']}_{row['Mode']}_{row['RequestType']}_{row['Concurrency']}"
+            if config_key not in config_groups:
+                config_groups[config_key] = []
+            config_groups[config_key].append(
+                {
+                    "timestamp": run_data["timestamp"],
+                    "datetime": run_data["datetime"],
+                    "throughput": row["ReqPerSec"],
+                    "latency_avg": row["Latency_Avg"],
+                    "latency_p99": row["Latency_P99"],
+                    "cpu_usage": row["CPUUsage"],
+                    "memory_usage": row["MemoryUsage"],
+                }
+            )
+
+    # Calculate trends for each configuration
+    for config_key, data_points in config_groups.items():
+        if len(data_points) < 2:
+            continue
+
+        # Sort by datetime
+        data_points.sort(key=lambda x: x["datetime"])
+
+        # Calculate trend metrics
+        throughputs = [
+            p["throughput"] for p in data_points if pd.notna(p["throughput"])
+        ]
+        latencies = [
+            p["latency_avg"] for p in data_points if pd.notna(p["latency_avg"])
+        ]
+
+        if len(throughputs) >= 2:
+            # Calculate performance change from first to last
+            first_throughput = throughputs[0]
+            last_throughput = throughputs[-1]
+
+            if first_throughput > 0:
+                throughput_change = (
+                    (last_throughput - first_throughput) / first_throughput
+                ) * 100
+            else:
+                throughput_change = 0
+
+            # Calculate trend direction and stability
+            if len(throughputs) >= 3:
+                # Simple linear trend calculation
+                x_values = list(range(len(throughputs)))
+                trend_slope = (
+                    np.polyfit(x_values, throughputs, 1)[0]
+                    if len(throughputs) > 1
+                    else 0
+                )
+                trend_direction = (
+                    "improving"
+                    if trend_slope > 0
+                    else "declining" if trend_slope < 0 else "stable"
+                )
+
+                # Calculate coefficient of variation for stability
+                cv = (
+                    np.std(throughputs) / np.mean(throughputs) * 100
+                    if np.mean(throughputs) > 0
+                    else 0
+                )
+                stability = (
+                    "stable" if cv < 10 else "variable" if cv < 25 else "unstable"
+                )
+            else:
+                trend_direction = (
+                    "improving"
+                    if throughput_change > 5
+                    else "declining" if throughput_change < -5 else "stable"
+                )
+                stability = "insufficient_data"
+
+            trends[config_key] = {
+                "config": config_key,
+                "throughput_change_percent": throughput_change,
+                "trend_direction": trend_direction,
+                "stability": stability,
+                "data_points": len(data_points),
+                "first_run": data_points[0]["timestamp"],
+                "last_run": data_points[-1]["timestamp"],
+                "avg_throughput": np.mean(throughputs),
+                "best_throughput": max(throughputs),
+                "worst_throughput": min(throughputs),
+            }
+
+    return trends
+
+
+def generate_comparison_report(comparison_data, trends, report_dir):
+    """Generate comparison report with multiple runs and trend analysis."""
+
+    # Create comparison summary
+    comparison_summary = []
+    for run_data in comparison_data:
+        df = run_data["df"]
+        summary = {
+            "timestamp": run_data["timestamp"],
+            "datetime": run_data["datetime"].strftime("%Y-%m-%d %H:%M:%S"),
+            "total_configs": len(df),
+            "avg_throughput": df["ReqPerSec"].mean(),
+            "max_throughput": df["ReqPerSec"].max(),
+            "avg_latency": df["Latency_Avg"].mean(),
+            "json_files": run_data["json_count"],
+        }
+        comparison_summary.append(summary)
+
+    # Generate comparison CSV
+    comparison_csv_path = os.path.join(report_dir, "comparison_summary.csv")
+    comparison_df = pd.DataFrame(comparison_summary)
+    comparison_df.to_csv(comparison_csv_path, index=False)
+
+    # Generate trends CSV
+    if trends:
+        trends_csv_path = os.path.join(report_dir, "performance_trends.csv")
+        trends_df = pd.DataFrame(list(trends.values()))
+        trends_df.to_csv(trends_csv_path, index=False)
+
+        print(f"Generated comparison summary: {comparison_csv_path}")
+        print(f"Generated trends analysis: {trends_csv_path}")
+
+    return comparison_summary
+
+
+def generate_trend_charts(trends, report_dir):
+    """Generate trend visualization charts."""
+    if not trends:
+        return []
+
+    charts = []
+
+    # Group trends by client for better visualization
+    client_trends = {}
+    for config_key, trend_data in trends.items():
+        client = config_key.split("_")[0]
+        if client not in client_trends:
+            client_trends[client] = []
+        client_trend_data.append(trend_data)
+
+    # Generate chart for each client
+    for client, client_trend_data in client_trends.items():
+        plt.figure(figsize=(12, 6))
+
+        # Sort by average throughput for consistent ordering
+        client_trend_data.sort(key=lambda x: x["avg_throughput"], reverse=True)
+
+        configs = [
+            trend["config"].replace(f"{client}_", "").replace("_", "\n")
+            for trend in client_trend_data
+        ]
+        throughput_changes = [
+            trend["throughput_change_percent"] for trend in client_trend_data
+        ]
+
+        # Color code by trend direction
+        colors = []
+        for trend in client_trend_data:
+            if trend["trend_direction"] == "improving":
+                colors.append("green")
+            elif trend["trend_direction"] == "declining":
+                colors.append("red")
+            else:
+                colors.append("gray")
+
+        plt.bar(range(len(configs)), throughput_changes, color=colors, alpha=0.7)
+        plt.xlabel("Configuration")
+        plt.ylabel("Performance Change (%)")
+        plt.title(f"Performance Trends: {client}")
+        plt.xticks(range(len(configs)), configs, rotation=45, ha="right")
+        plt.axhline(y=0, color="black", linestyle="-", alpha=0.3)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        # Save chart
+        chart_path = os.path.join(report_dir, f"trends_{client}.png")
+        plt.savefig(chart_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        charts.append(f"trends_{client}.png")
+
+    return charts
+
+
+def process_single_directory(results_dir):
+    """Process a single results directory and return processed data and file groups."""
+    # Find all JSON result files
+    all_files = []
+    try:
+        for filename in os.listdir(results_dir):
+            if filename.endswith(".json"):
+                all_files.append(os.path.join(results_dir, filename))
+    except OSError as e:
+        print(f"Error reading results directory '{results_dir}': {e}")
+        return None, None
+
+    if not all_files:
+        print(f"No result files (*.json) found in {results_dir}!")
+        return None, None
+
+    # Group files by configuration and find median
+    file_groups = {}
+    for filepath in all_files:
+        filename = os.path.basename(filepath)
+        try:
+            implementation, mode, req_type, concurrency, file_duration, client_name = (
+                parse_filename(filename)
+            )
+
+            if concurrency == 0 or req_type == "unknown":
+                continue
+
+            throughput = get_throughput_from_json(filepath)
+            if throughput <= 0:
+                continue
+
+            config_key = (client_name, mode, req_type, concurrency, file_duration)
+            if config_key not in file_groups:
+                file_groups[config_key] = []
+            file_groups[config_key].append(
+                {
+                    "filepath": filepath,
+                    "throughput": throughput,
+                    "filename": filename,
+                    "implementation": implementation,
+                }
+            )
+
+        except Exception as e:
+            print(f"  Warning: Error processing file {filename}: {e}")
+            continue
+
+    # Find median files and process them
+    data = []
+    for config_key, files in file_groups.items():
+        if not files:
+            continue
+
+        files.sort(key=lambda x: x["throughput"])
+        median_file = files[len(files) // 2]
+
+        client_name, mode, req_type, concurrency, file_duration = config_key
+
+        try:
+            with open(median_file["filepath"], "r") as f:
+                result_json = json.load(f)
+
+            # Extract metrics with safe handling
+            def safe_float(value, default=0.0):
+                if (
+                    value is None
+                    or value == ""
+                    or (isinstance(value, str) and value.strip() == "")
+                ):
+                    return default
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+
+            # Priority for sorting
+            def get_client_priority(client):
+                client_lower = str(client).lower()
+                if "valkey-glide" in client_lower:
+                    return 1
+                elif "iovalkey" in client_lower:
+                    return 2
+                elif "ioredis" in client_lower:
+                    return 3
+                return 4
+
+            req_per_sec = safe_float(result_json.get("requests", {}).get("average", 0))
+            latency_avg = safe_float(result_json.get("latency", {}).get("average", 0))
+            latency_p50 = safe_float(result_json.get("latency", {}).get("p50", 0))
+            latency_p99 = safe_float(result_json.get("latency", {}).get("p99", 0))
+
+            # Additional metrics
+            rate_limit_hits = safe_float(result_json.get("rate_limit_hits", 0))
+            cpu_usage = safe_float(result_json.get("cpu_usage", 0))
+            memory_usage = safe_float(result_json.get("memory_usage", 0))
+            errors = result_json.get('errors', 0)
+            timeouts = result_json.get('timeouts', 0)
+            total_errors = result_json.get(
+                "totalErrors",
+                (
+                    errors + timeouts
+                    if isinstance(errors, (int, float))
+                    and isinstance(timeouts, (int, float))
+                    else 0
+                ),
+            )
+
+            data.append(
+                {
+                    "Client": client_name,
+                    "Mode": mode,
+                    "RequestType": req_type,
+                    "Concurrency": concurrency,
+                    "Duration": file_duration,
+                    "Priority": get_client_priority(client_name),
+                    "ReqPerSec": safe_float(req_per_sec),
+                    "Latency_Avg": safe_float(latency_avg),
+                    "Latency_P50": safe_float(latency_p50),
+                    "Latency_P99": safe_float(latency_p99),
+                    "RateLimitHits": int(safe_float(rate_limit_hits)),
+                    "CPUUsage": safe_float(cpu_usage),
+                    "MemoryUsage": safe_float(memory_usage),
+                    "Errors": int(errors) if isinstance(errors, (int, float)) else 0,
+                    "Timeouts": (
+                        int(timeouts) if isinstance(timeouts, (int, float)) else 0
+                    ),
+                    "TotalErrors": (
+                        int(total_errors)
+                        if isinstance(total_errors, (int, float))
+                        else 0
+                    ),
+                }
+            )
+
+        except Exception as e:
+            print(f"  Warning: Error processing file {median_file['filename']}: {e}")
+            continue
+
+    if not data:
+        return None, None
+
+    return pd.DataFrame(data), file_groups
+
+
+def extract_median_results(results_base_dir, output_dir):
+    """
+    Extract median performing files for each configuration across all runs.
+
+    Args:
+        results_base_dir: Base directory containing timestamped result directories
+        output_dir: Directory to store the curated median results
+
+    Returns:
+        str: Path to the created median results directory
+    """
+    print("Extracting median results across all runs...")
+
+    # Find all timestamped directories
+    run_dirs = find_comparison_directories(results_base_dir)
+    if len(run_dirs) < 2:
+        print(
+            f"Warning: Only found {len(run_dirs)} run directories. Need at least 2 for median extraction."
+        )
+        return None
+
+    print(f"Found {len(run_dirs)} run directories to analyze")
+
+    # Collect all files across all runs, grouped by configuration
+    config_files = {}  # config_key -> list of (filepath, throughput, run_timestamp)
+
+    for run_info in run_dirs:
+        run_dir = run_info["timestamp"]
+        run_path = run_info["path"]
+        json_count = run_info["json_count"]
+
+        print(f"  Analyzing {run_dir} ({json_count} files)...")
+
+        # Get all JSON files in this run directory
+        json_files = [f for f in os.listdir(run_path) if f.endswith(".json")]
+
+        for json_file in json_files:
+            filepath = os.path.join(run_path, json_file)
+            try:
+                (
+                    implementation,
+                    mode,
+                    req_type,
+                    concurrency,
+                    file_duration,
+                    client_name,
+                ) = parse_filename(json_file)
+
+                if concurrency == 0 or req_type == "unknown":
+                    continue
+
+                throughput = get_throughput_from_json(filepath)
+                if throughput <= 0:
+                    continue
+
+                config_key = (client_name, mode, req_type, concurrency, file_duration)
+                if config_key not in config_files:
+                    config_files[config_key] = []
+
+                config_files[config_key].append(
+                    {
+                        "filepath": filepath,
+                        "throughput": throughput,
+                        "filename": json_file,
+                        "run_timestamp": run_dir,
+                        "implementation": implementation,
+                    }
+                )
+
+            except Exception as e:
+                print(f"    Warning: Error processing {json_file}: {e}")
+                continue
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # For each configuration, find median and copy file
+    median_files_copied = 0
+    total_configs = len(config_files)
+
+    print(f"\nExtracting median files for {total_configs} configurations...")
+
+    for config_key, files in config_files.items():
+        if len(files) < 2:
+            print(
+                f"  Warning: Only {len(files)} files found for config {config_key}, skipping"
+            )
+            continue
+
+        # Sort by throughput and find median
+        files.sort(key=lambda x: x["throughput"])
+        median_idx = len(files) // 2
+        median_file = files[median_idx]
+
+        # Copy median file to output directory
+        src_path = median_file["filepath"]
+        dst_path = os.path.join(output_dir, median_file["filename"])
+
+        try:
+            shutil.copy2(src_path, dst_path)
+            median_files_copied += 1
+
+            client_name, mode, req_type, concurrency, file_duration = config_key
+            print(
+                f"  ✓ {client_name} {mode} {req_type} {concurrency}c {file_duration}s -> {median_file['filename']}"
+            )
+            print(
+                f"    Median throughput: {median_file['throughput']:.1f} req/s (from {len(files)} runs)"
+            )
+
+        except Exception as e:
+            print(f"  ✗ Error copying {median_file['filename']}: {e}")
+            continue
+
+    print(f"\nSuccessfully extracted {median_files_copied} median result files")
+    print(f"Median results directory: {output_dir}")
+
+    # Create a summary file of what was extracted
+    summary_path = os.path.join(output_dir, "median_extraction_summary.txt")
+    with open(summary_path, "w") as f:
+        f.write("Median Result Extraction Summary\n")
+        f.write("================================\n\n")
+        f.write(f"Extraction Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Source Directory: {results_base_dir}\n")
+        f.write(f"Run Directories Analyzed: {len(run_dirs)}\n")
+        f.write(f"Total Configurations Found: {total_configs}\n")
+        f.write(f"Median Files Extracted: {median_files_copied}\n\n")
+
+        f.write("Run Directories:\n")
+        for run_info in run_dirs:
+            f.write(
+                f"  - {run_info['timestamp']}: {run_info['json_count']} JSON files\n"
+            )
+
+        f.write(f"\nConfigurations with median results:\n")
+        for config_key, files in config_files.items():
+            if len(files) >= 2:
+                client_name, mode, req_type, concurrency, file_duration = config_key
+                files.sort(key=lambda x: x["throughput"])
+                median_file = files[len(files) // 2]
+                f.write(
+                    f"  - {client_name} {mode} {req_type} {concurrency}c {file_duration}s: {median_file['throughput']:.1f} req/s\n"
+                )
+
+    return output_dir
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate a benchmark report from JSON results, using median throughput runs.")
+    parser = argparse.ArgumentParser(
+        description="Generate a benchmark report from JSON results, using median throughput runs."
+    )
     parser.add_argument(
         "results_dir",
-        nargs='?',
+        nargs="?",
         default=DEFAULT_RESULTS_DIR,
-        help=f"Directory containing the JSON result files (default: {DEFAULT_RESULTS_DIR})"
+        help=f"Directory containing the JSON result files (default: {DEFAULT_RESULTS_DIR})",
+    )
+    parser.add_argument(
+        "--compare-runs",
+        action="store_true",
+        help="Compare performance across multiple result directories (requires multiple runs in parent directory)",
+    )
+    parser.add_argument(
+        "--include-trends",
+        action="store_true",
+        help="Include trend analysis and performance change detection",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        help="Specify a baseline directory for comparison (used with --compare-runs)",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=["html", "csv", "both"],
+        default="both",
+        help="Output format for the report (default: both)",
+    )
+    parser.add_argument(
+        "--extract-median",
+        action="store_true",
+        help="Extract median performing files for each configuration across all runs and generate dashboard from curated dataset",
     )
     args = parser.parse_args()
 
     results_dir = args.results_dir
     # Resolve 'latest' symlink if present
     if os.path.islink(results_dir):
-         try:
-             results_dir = os.path.realpath(results_dir)
-         except OSError as e:
-             print(f"Error resolving symlink '{args.results_dir}': {e}")
-             exit(1)
+        try:
+            results_dir = os.path.realpath(results_dir)
+        except OSError as e:
+            print(f"Error resolving symlink '{args.results_dir}': {e}")
+            exit(1)
 
+    # Handle median extraction mode
+    if args.extract_median:
+        # For median extraction, we expect the parent directory containing multiple timestamped runs
+        if results_dir.endswith("/latest") or results_dir.endswith("latest"):
+            # Navigate to parent results directory
+            results_base_dir = os.path.dirname(results_dir)
+        else:
+            results_base_dir = (
+                os.path.dirname(results_dir)
+                if os.path.basename(results_dir).startswith("202")
+                else results_dir
+            )
 
+        print(
+            f"Median extraction mode: Analyzing runs in {os.path.abspath(results_base_dir)}"
+        )
+
+        # Create median results directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        median_dir = os.path.join(results_base_dir, f"median_results_{timestamp}")
+
+        # Extract median files
+        extracted_dir = extract_median_results(results_base_dir, median_dir)
+        if extracted_dir is None:
+            print("Error: Failed to extract median results")
+            exit(1)
+
+        print(f"\n" + "=" * 60)
+        print("MEDIAN EXTRACTION COMPLETE")
+        print("=" * 60)
+        print(f"Curated dataset: {extracted_dir}")
+
+        # Now generate dashboard from the median results
+        print(f"\nGenerating dashboard from curated median dataset...")
+        results_dir = extracted_dir
+        # Continue with normal single-directory processing below
+
+    # Handle comparison mode
+    elif args.compare_runs:
+        # For comparison, we expect the parent directory containing multiple timestamped runs
+        if results_dir.endswith("/latest") or results_dir.endswith("latest"):
+            # Navigate to parent results directory
+            results_base_dir = os.path.dirname(results_dir)
+        else:
+            results_base_dir = (
+                os.path.dirname(results_dir)
+                if os.path.basename(results_dir).startswith("202")
+                else results_dir
+            )
+
+        print(
+            f"Comparison mode: Looking for multiple runs in {os.path.abspath(results_base_dir)}"
+        )
+
+        # Find all comparison directories
+        comparison_dirs = find_comparison_directories(results_base_dir)
+
+        if len(comparison_dirs) < 2:
+            print(
+                f"Error: Need at least 2 benchmark runs for comparison. Found {len(comparison_dirs)} runs."
+            )
+            print("Available directories:")
+            for d in comparison_dirs:
+                print(f"  - {d['timestamp']} ({d['json_count']} JSON files)")
+            exit(1)
+
+        print(f"Found {len(comparison_dirs)} benchmark runs for comparison:")
+        for d in comparison_dirs:
+            print(f"  - {d['timestamp']}: {d['json_count']} JSON files")
+
+        # Process each directory
+        comparison_data = []
+        for comp_dir in comparison_dirs:
+            print(f"\nProcessing {comp_dir['timestamp']}...")
+            df = process_single_directory(comp_dir["path"])
+            if df is not None and not df.empty:
+                comparison_data.append(
+                    {
+                        "timestamp": comp_dir["timestamp"],
+                        "datetime": comp_dir["datetime"],
+                        "path": comp_dir["path"],
+                        "df": df,
+                        "json_count": comp_dir["json_count"],
+                    }
+                )
+            else:
+                print(f"  Warning: No valid data found in {comp_dir['timestamp']}")
+
+        if len(comparison_data) < 2:
+            print("Error: Need at least 2 directories with valid data for comparison.")
+            exit(1)
+
+        # Create comparison report directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        comparison_report_dir = os.path.join(
+            results_base_dir, f"comparison_report_{timestamp}"
+        )
+        os.makedirs(comparison_report_dir, exist_ok=True)
+
+        print(f"\nGenerating comparison report in: {comparison_report_dir}")
+
+        # Calculate trends if requested
+        trends = {}
+        if args.include_trends:
+            print("Calculating performance trends...")
+            trends = calculate_performance_trends(comparison_data)
+            print(f"Analyzed trends for {len(trends)} configurations")
+
+        # Generate comparison report
+        comparison_summary = generate_comparison_report(
+            comparison_data, trends, comparison_report_dir
+        )
+
+        # Generate trend charts if requested
+        if args.include_trends and trends:
+            print("Generating trend visualization charts...")
+            trend_charts = generate_trend_charts(trends, comparison_report_dir)
+            print(f"Generated {len(trend_charts)} trend charts")
+
+        # Use the latest run's data for the main HTML report
+        latest_data = comparison_data[-1]
+        df = latest_data["df"]
+
+        # Generate enhanced HTML report with comparison data
+        print("Generating enhanced HTML report with comparison data...")
+        generate_html_report(
+            df,
+            comparison_report_dir,
+            latest_data["path"],
+            comparison_data=comparison_data,
+            trends=trends if args.include_trends else None,
+        )
+
+        # Generate CSV summary
+        if args.output_format in ["csv", "both"]:
+            summary_csv_path = os.path.join(comparison_report_dir, SUMMARY_CSV_FILENAME)
+            print(f"Generating summary CSV at: {summary_csv_path}")
+            try:
+                csv_columns = [
+                    "Client",
+                    "Mode",
+                    "RequestType",
+                    "Concurrency",
+                    "Duration",
+                    "ReqPerSec",
+                    "Latency_Avg",
+                    "Latency_P50",
+                    "Latency_P99",
+                    "RateLimitHits",
+                    "CPUUsage",
+                    "MemoryUsage",
+                ]
+                cols_to_select = [col for col in csv_columns if col in df.columns] + [
+                    "Priority"
+                ]
+                df_csv = df[cols_to_select].copy()
+
+                def get_client_priority(client):
+                    client_lower = str(client).lower()
+                    if "valkey-glide" in client_lower:
+                        return 1
+                    elif "iovalkey" in client_lower:
+                        return 2
+                    elif "ioredis" in client_lower:
+                        return 3
+                    return 4
+
+                df_csv["ClientPriority"] = df_csv["Client"].apply(get_client_priority)
+                df_csv = df_csv.sort_values(
+                    by=["RequestType", "Mode", "Concurrency", "ClientPriority"],
+                    ascending=[True, True, True, True],
+                ).drop(columns=["Priority", "ClientPriority"])
+
+                df_csv = df_csv[[col for col in csv_columns if col in df_csv.columns]]
+                float_cols = df_csv.select_dtypes(include=["float"]).columns
+                df_csv[float_cols] = df_csv[float_cols].round(2)
+
+                df_csv.to_csv(
+                    summary_csv_path,
+                    index=False,
+                    quoting=csv.QUOTE_NONNUMERIC,
+                    na_rep="N/A",
+                )
+                print(f"Successfully wrote CSV summary to {summary_csv_path}")
+            except Exception as e:
+                print(f"Error writing CSV summary: {e}")
+
+        print("-" * 50)
+        print(f"Comparison report generation complete!")
+        print(f"Report directory: {os.path.abspath(comparison_report_dir)}")
+        print(
+            f"HTML Report: {os.path.abspath(os.path.join(comparison_report_dir, REPORT_HTML_FILENAME))}"
+        )
+        if args.output_format in ["csv", "both"]:
+            print(
+                f"Summary CSV: {os.path.abspath(os.path.join(comparison_report_dir, SUMMARY_CSV_FILENAME))}"
+            )
+        if args.include_trends:
+            print(
+                f"Comparison Summary: {os.path.abspath(os.path.join(comparison_report_dir, 'comparison_summary.csv'))}"
+            )
+            print(
+                f"Trends Analysis: {os.path.abspath(os.path.join(comparison_report_dir, 'performance_trends.csv'))}"
+            )
+        print("-" * 50)
+        return
+
+    # Standard single-directory processing
     if not os.path.isdir(results_dir):
         print(f"Error: Results directory '{results_dir}' not found!")
         print(f"Attempted absolute path: {os.path.abspath(results_dir)}")
@@ -866,219 +1740,25 @@ def main():
         print(f"Error creating report directory '{report_dir}': {e}")
         exit(1)
 
-    # Find all JSON result files
-    all_files = []
-    try:
-        for filename in os.listdir(results_dir):
-            if filename.endswith(".json"):
-                all_files.append(os.path.join(results_dir, filename))
-    except OSError as e:
-        print(f"Error reading results directory '{results_dir}': {e}")
-        exit(1)
+    # Process the single directory
+    df, file_groups = process_single_directory(results_dir)
+    if df is None or df.empty:
+        print("Error: No valid data processed from the result files.")
+        exit(1)  # Generate report using the processed DataFrame
+    html_report_path = os.path.join(report_dir, "index.html")
 
-
-    if not all_files:
-        print(f"No result files (*.json) found in {results_dir}!")
-        exit(1)
-
-    print(f"Found {len(all_files)} total JSON files.")
-
-    # --- Group files by configuration and find median ---
-    file_groups = {}
-    print("Grouping files by configuration and identifying median throughput runs...")
-    for filepath in all_files:
-        filename = os.path.basename(filepath)
-        try:
-            # Use the refined parser
-            implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename) # Changed to client_name
-
-            # Skip if parsing failed significantly (e.g., no concurrency or unknown type)
-            if concurrency == 0 or req_type == "unknown":
-                 print(f"  Skipping file due to incomplete parsed data: {filename}")
-                 continue
-
-            # Get throughput for median calculation (using the consistent helper function)
-            throughput = get_throughput_from_json(filepath)
-
-            # Configuration key uses the cleaned client name
-            config_key = (client_name.lower(), mode.lower(), req_type.lower(), concurrency)
-
-            if config_key not in file_groups:
-                file_groups[config_key] = []
-            # Store filepath and the throughput value used for sorting
-            file_groups[config_key].append({'filepath': filepath, 'throughput': throughput})
-
-        except Exception as e:
-            print(f"  Warning: Error processing file {filename} during grouping: {e}")
-            traceback.print_exc() # Print traceback for debugging grouping errors
-
-    # Select the file with median throughput for each group
-    median_files_to_process = []
-    processed_configs = set() # Keep track of processed configurations
-
-    for config_key, files_in_group in file_groups.items():
-        if not files_in_group:
-            print(f"  Warning: No files found for config: {config_key}")
-            continue
-
-        # Sort files within the group by throughput
-        files_in_group.sort(key=lambda x: x['throughput'])
-
-        # Find the median index (middle element)
-        median_idx = len(files_in_group) // 2
-        median_file_info = files_in_group[median_idx]
-        median_files_to_process.append(median_file_info['filepath'])
-        processed_configs.add(config_key)
-
-        # Optional: Print info about median selection
-        # print(f"  Config: {config_key} - Found {len(files_in_group)} runs. Median throughput: {median_file_info['throughput']:.2f} from file: {os.path.basename(median_file_info['filepath'])}")
-
-    if not median_files_to_process:
-        print("Error: No median files could be identified. Check file naming and content.")
-        exit(1)
-
-    print(f"Identified {len(median_files_to_process)} median files for processing across {len(processed_configs)} configurations.")
-
-    # --- Process only the selected median files ---
-    data = []
-    print("Processing median files...")
-    for result_file in sorted(median_files_to_process): # Sort for consistent order
-        filename = os.path.basename(result_file)
-        try:
-            with open(result_file, 'r') as f:
-                result_json = json.load(f)
-
-            # Re-parse filename to get all metadata consistently
-            implementation, mode, req_type, concurrency, file_duration, client_name = parse_filename(filename) # Changed to client_name
-
-            # Prioritize Valkey implementations for sorting later
-            priority = 1 if 'valkey' in client_name.lower() else 2 # Use client_name
-
-            # Extract metrics, providing defaults (0 or NaN)
-            req_per_sec = get_throughput_from_json(result_file) # Use helper again for consistency
-
-            latency = result_json.get('latency', {})
-            latency_avg = latency.get('average')
-            latency_p50 = latency.get('p50')
-            latency_p99 = latency.get('p99')
-
-            rate_limit_hits = result_json.get('rateLimitHits')
-            resources = result_json.get('resources', {})
-            cpu_usage = resources.get('cpu', {}).get('average')
-            memory_usage = resources.get('memory', {}).get('average')
-
-            # Use duration from JSON if available, otherwise from filename, default to 30
-            duration = result_json.get('duration', file_duration if file_duration > 0 else 30)
-
-            # Helper function to safely convert to float or return NaN
-            def safe_float(value):
-                try:
-                    # Attempt conversion only if value is not None
-                    return float(value) if value is not None else np.nan
-                except (ValueError, TypeError):
-                     # Print warning if conversion fails for non-None value
-                    if value is not None:
-                        print(f"  Warning: Could not convert value '{value}' (type: {type(value)}) to float in file {filename}. Using NaN.")
-                    return np.nan
-
-            # Extract error information
-            errors = result_json.get('errors', 0)
-            timeouts = result_json.get('timeouts', 0)
-            total_errors = errors + timeouts
-            
-            # Append data using Client name
-            data.append({
-                "Priority": priority,
-                "Client": client_name, # Use Client name for consistency
-                "Mode": mode,
-                "RequestType": req_type,
-                "Concurrency": concurrency,
-                "Duration": round(safe_float(duration), 2), # Apply safe_float here too
-                # --- Metrics (use safe conversion) ---
-                "ReqPerSec": safe_float(req_per_sec),
-                "Latency_Avg": safe_float(latency_avg),
-                "Latency_P50": safe_float(latency_p50),
-                "Latency_P99": safe_float(latency_p99),
-                "RateLimitHits": int(safe_float(rate_limit_hits)) if pd.notna(safe_float(rate_limit_hits)) else 0, # Default 0 for hits
-                "CPUUsage": safe_float(cpu_usage),
-                "MemoryUsage": safe_float(memory_usage),
-                "Errors": int(errors) if isinstance(errors, (int, float)) else 0,
-                "Timeouts": int(timeouts) if isinstance(timeouts, (int, float)) else 0,
-                "TotalErrors": int(total_errors) if isinstance(total_errors, (int, float)) else 0,
-            })
-            # print(f"  Processed: {filename}")
-
-        except json.JSONDecodeError:
-            print(f"  Warning: Could not decode JSON from file: {filename}")
-        except Exception as e:
-            print(f"  Warning: Error processing file {filename}: {e}")
-            traceback.print_exc() # Print full traceback for debugging
-
-    if not data:
-        print("Error: No valid data processed from the median JSON files.")
-        exit(1)
-
-    # Create DataFrame from the processed median data
-    df = pd.DataFrame(data)
-
-    # --- Generate summary CSV ---
-    summary_csv_path = os.path.join(report_dir, SUMMARY_CSV_FILENAME)
-    print(f"Generating summary CSV at: {summary_csv_path}")
-    try:
-        # Define explicit column order for CSV, using Client
-        csv_columns = [
-            "Client", "Mode", "RequestType", "Concurrency", "Duration", # Changed to Client
-            "ReqPerSec", "Latency_Avg", "Latency_P50", "Latency_P99", # Simplified latency
-            "RateLimitHits", "CPUUsage", "MemoryUsage"
-        ]
-        # Ensure columns exist before selecting/sorting, add Priority for sorting
-        cols_to_select = [col for col in csv_columns if col in df.columns] + ['Priority']
-        # Filter df before copying to avoid SettingWithCopyWarning if cols_to_select is different
-        df_csv = df[cols_to_select].copy()
-
-
-        # Apply the same client priority sorting as in the HTML report
-        def get_client_priority(client):
-            client_lower = str(client).lower()
-            if 'valkey-glide' in client_lower:
-                return 1
-            elif 'iovalkey' in client_lower:
-                return 2
-            elif 'ioredis' in client_lower:
-                return 3
-            return 4  # Any other clients
-        
-        df_csv['ClientPriority'] = df_csv['Client'].apply(get_client_priority)
-        
-        # Sort by configuration, then by client priority
-        df_csv = df_csv.sort_values(
-            by=['RequestType', 'Mode', 'Concurrency', 'ClientPriority'],
-            ascending=[True, True, True, True]
-        ).drop(columns=['Priority', 'ClientPriority']) # Drop helper columns
-
-        # Reorder to final CSV columns, ensuring they exist
-        df_csv = df_csv[[col for col in csv_columns if col in df_csv.columns]]
-
-        # Round floats for CSV readability
-        float_cols = df_csv.select_dtypes(include=['float']).columns
-        df_csv[float_cols] = df_csv[float_cols].round(2)
-
-        df_csv.to_csv(summary_csv_path, index=False, quoting=csv.QUOTE_NONNUMERIC, na_rep='N/A')
-        print(f"Successfully wrote CSV summary to {summary_csv_path}")
-    except Exception as e:
-        print(f"Error writing CSV summary: {e}")
-        traceback.print_exc()
-
-
-    # --- Generate HTML Report ---
-    # Pass the DataFrame with median data (df) to the HTML generator
+    # For single directory mode, we don't need to iterate through file_groups
+    # The DataFrame already contains the processed median data
     generate_html_report(df, report_dir, results_dir)
 
-    print("-" * 30)
-    print(f"Report generation complete.")
-    print(f"Summary CSV: {os.path.abspath(summary_csv_path)}")
-    print(f"HTML Report: {os.path.abspath(os.path.join(report_dir, REPORT_HTML_FILENAME))}")
-    print("-" * 30)
+    # Generate CSV if requested
+    if args.output_format in ["csv", "both"]:
+        csv_path = os.path.join(report_dir, "summary.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Successfully wrote CSV summary to {csv_path}")
+    print(f"Successfully wrote HTML report to {os.path.join(report_dir, 'index.html')}")
+    print(f"Report directory: {report_dir}")
+
 
 if __name__ == "__main__":
     main()

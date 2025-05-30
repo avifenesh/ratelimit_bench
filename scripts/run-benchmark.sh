@@ -503,11 +503,11 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         PROJECT_PREFIX=${COMPOSE_PROJECT_NAME:-ratelimit_bench}
 
         if [[ "$db_tech" == "redis" ]]; then
-            REDIS_CLUSTER_NODES="redis-cluster-pod:6380,redis-cluster-pod:6381,redis-cluster-pod:6382,redis-cluster-pod:6383,redis-cluster-pod:6384,redis-cluster-pod:6385"
+            REDIS_CLUSTER_NODES="${PROJECT_PREFIX}-redis-node1:6379,${PROJECT_PREFIX}-redis-node2:6379,${PROJECT_PREFIX}-redis-node3:6379,${PROJECT_PREFIX}-redis-node4:6379,${PROJECT_PREFIX}-redis-node5:6379,${PROJECT_PREFIX}-redis-node6:6379"
             server_env_vars+=(-e "REDIS_CLUSTER_NODES=${REDIS_CLUSTER_NODES}")
             log "REDIS_CLUSTER_NODES set to: ${REDIS_CLUSTER_NODES}"
         elif [[ "$db_tech" == "valkey" ]]; then
-            VALKEY_CLUSTER_NODES="valkey-cluster-pod:7000,valkey-cluster-pod:7001,valkey-cluster-pod:7002,valkey-cluster-pod:7003,valkey-cluster-pod:7004,valkey-cluster-pod:7005"
+            VALKEY_CLUSTER_NODES="${PROJECT_PREFIX}-valkey-node1:8080,${PROJECT_PREFIX}-valkey-node2:8080,${PROJECT_PREFIX}-valkey-node3:8080,${PROJECT_PREFIX}-valkey-node4:8080,${PROJECT_PREFIX}-valkey-node5:8080,${PROJECT_PREFIX}-valkey-node6:8080"
             server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
             log "VALKEY_CLUSTER_NODES set to: ${VALKEY_CLUSTER_NODES}"
         fi
