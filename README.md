@@ -15,6 +15,62 @@ A comprehensive benchmark suite for comparing [rate-limiter-flexible](https://gi
 
 [CSV Summary Data](https://avifenesh.github.io/ratelimit_bench/summary.csv) - Raw benchmark metrics
 
+## Table of Contents
+
+- [Rate Limiter Benchmark](#rate-limiter-benchmark)
+  - [Table of Contents](#table-of-contents)
+  - [Executive Summary](#executive-summary)
+  - [Project Overview](#project-overview)
+  - [Architecture](#architecture)
+  - [Benchmark Environment](#benchmark-environment)
+    - [Container Architecture](#container-architecture)
+    - [Hardware Specifications](#hardware-specifications)
+    - [Standalone vs Cluster Setup](#standalone-vs-cluster-setup)
+    - [Performance Settings](#performance-settings)
+  - [Getting Started](#getting-started)
+    - [Interactive Mode (Recommended)](#interactive-mode-recommended)
+    - [Non-Interactive Mode](#non-interactive-mode)
+    - [Available Options](#available-options)
+    - [Dynamic Duration Logic](#dynamic-duration-logic)
+    - [Legacy Mode](#legacy-mode)
+  - [Benchmark Options](#benchmark-options)
+  - [Client Implementations](#client-implementations)
+  - [Testing Scenarios](#testing-scenarios)
+  - [Metrics Collected](#metrics-collected)
+    - [Raw Data Format](#raw-data-format)
+  - [Benchmark Methodology and Results Processing](#benchmark-methodology-and-results-processing)
+    - [Test Execution](#test-execution)
+    - [Data Processing](#data-processing)
+  - [Report Generation Process](#report-generation-process)
+    - [Data Processing Pipeline](#data-processing-pipeline)
+    - [Visualization Features](#visualization-features)
+  - [Understanding the Results](#understanding-the-results)
+    - [Key Performance Indicators](#key-performance-indicators)
+    - [Performance Trade-offs](#performance-trade-offs)
+  - [Results Structure](#results-structure)
+  - [Current Project Structure](#current-project-structure)
+  - [Troubleshooting](#troubleshooting)
+  - [Contributing](#contributing)
+  - [License](#license)
+  - [Benchmark Results](#benchmark-results)
+    - [Interactive Results Report](#interactive-results-report)
+    - [Key Findings (Generated on: April 16, 2025)](#key-findings-generated-on-april-16-2025)
+    - [Cluster Mode Results](#cluster-mode-results)
+    - [Standalone Mode Results](#standalone-mode-results)
+    - [Performance Analysis](#performance-analysis)
+    - [Raw Data Access](#raw-data-access)
+
+## Executive Summary
+
+This project evaluates rate limiter performance across different Redis-compatible client implementations. Key findings:
+
+- **Valkey Glide** consistently delivers the highest throughput and lowest latency in both standalone and cluster configurations
+- Performance differences become more pronounced under high concurrency (500-1000 connections)
+- Cluster configurations provide better scalability for high-load scenarios
+- All tests run in resource-controlled Docker environments (2 CPU cores, 2GB memory) to ensure fair comparison
+
+Whether you're building high-performance APIs or microservices requiring rate limiting, this benchmark provides data-driven insights to help choose the optimal implementation for your specific throughput and latency requirements.
+
 ## Project Overview
 
 This project benchmarks rate limiting performance using [Valkey](https://valkey.io/) and Redis-OSS with the rate-limiter-flexible [package](https://www.npmjs.com/package/rate-limiter-flexible).
@@ -34,7 +90,7 @@ To use valkey-glide you can visit [npm](https://www.npmjs.com/package/@valkey/va
 
 - **Valkey and Redis used as backends for rate limiting**
   - **Valkey**: Latest at the point of the benchmark - v8.1.0
-  - **Redis**: Latest OSS version which wasn't published as Valkey as well - v7.0.0
+  - **Redis**: Latest OSS version - v8.0.0
 
 - **Rate Limiters**: Using rate-limiter-flexible with different backends:
   - **Valkey Glide** – Modern TypeScript-native client, built with a focus on stability, reliability, performance, and scalability. Designed specifically to provide superior fault tolerance and user experience.
@@ -57,6 +113,81 @@ To use valkey-glide you can visit [npm](https://www.npmjs.com/package/@valkey/va
   - Individual benchmark runner: `scripts/run-benchmark.sh`
   - Report generation: `scripts/generate_report.py` creates HTML reports and CSV summaries
   - Network troubleshooting: `scripts/fix-network.sh`
+
+## Benchmark Environment
+
+To ensure fair and consistent comparisons between clients, all benchmarks run in resource-controlled Docker environments with identical configurations:
+
+### Container Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Benchmark Network                         │
+├───────────────┬──────────────────┬───────────────────────────┤
+│               │                  │                           │
+│ ┌─────────────▼────────────┐     │     ┌───────────────────┐ │
+│ │    Benchmark Server      │     │     │  Database Service  │ │
+│ │  ┌────────────────────┐  │     │     │                   │ │
+│ │  │ Rate Limiter       │  │     │     │  Redis or Valkey  │ │
+│ │  │ Implementation     ◄──┼─────┘     │                   │ │
+│ │  └────────────────────┘  │           │                   │ │
+│ └─────────────┬────────────┘           └───────────────────┘ │
+│               │                                              │
+│ ┌─────────────▼────────────┐                                 │
+│ │    Loadtest Client       │                                 │
+│ │  ┌────────────────────┐  │                                 │
+│ │  │ Performance        │  │                                 │
+│ │  │ Monitoring         │  │                                 │
+│ │  └────────────────────┘  │                                 │
+│ └──────────────────────────┘                                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Hardware Specifications
+
+Each container runs with carefully controlled resources:
+
+- **Database Containers (Redis/Valkey)**:
+  - CPU: 2 cores (limited)
+  - Memory: 2GB RAM (limited) 
+  - Ulimits: nproc=65535, nofile=65535 
+  - Network: Dedicated benchmark network
+  - Storage: Memory-only (no persistence)
+
+- **Server Container**:
+  - Node.js 20 environment
+  - Standard resources (not artificially limited)
+  - Network: Same benchmark network
+
+- **Loadtest Container**:
+  - Node.js 20 environment
+  - Autocannon configured with specified concurrency
+  - Resource monitoring active
+
+### Standalone vs Cluster Setup
+
+- **Standalone Mode**: Single database instance (either Redis or Valkey)
+
+- **Cluster Mode**: 
+  - 6-node configuration (3 primary, 3 replicas)
+  - Each node runs in a separate container
+  - Configured with proper replication and sharding
+  - Connected via dedicated internal network
+
+### Performance Settings
+
+- **Valkey/Redis Configuration**:
+  - `--save ""` (No persistence)
+  - `--appendonly no` (No AOF persistence)
+  - `--maxmemory 1gb` (Memory limit)
+  - `--maxmemory-policy volatile-lru` (LRU eviction policy)
+
+- **Network Configuration**:
+  - Dedicated bridge network
+  - All containers on same network
+  - Resource monitoring included
+
+This containerized benchmark environment ensures consistency and fairness across all tests, eliminating variables that could bias results.
 
 ## Getting Started
 
@@ -84,6 +215,7 @@ Run the enhanced script without arguments for a guided configuration:
 ```
 
 This provides an interactive menu to select:
+
 - **Specific clients**: Choose individual clients (valkey-glide, iovalkey, ioredis) or groups (standalone, cluster, all)
 - **Workload types**: Light, heavy, or both computational workloads
 - **Duration mode**:
@@ -207,30 +339,206 @@ The benchmark suite covers multiple testing scenarios:
 
 ## Metrics Collected
 
-The benchmark collects the following performance metrics:
+The benchmark collects comprehensive performance metrics through the `scripts/run-benchmark.sh` script which coordinates the benchmark execution and the `generate_report.py` script which processes the raw data. The following metrics are captured:
 
-- **Throughput**: Requests per second
-- **Latency**: Average, median (p50), p97.5, and p99 response times
-- **Rate Limiting**: Percentage of requests that hit rate limits
-- **System Resources**: CPU and memory usage during benchmarks
-- **Error Rates**: Percentage of failed requests
+- **Throughput (ReqPerSec)**: 
+  - Total number of requests per second the system can handle
+  - Calculated by dividing the total successful requests by the test duration
+  - Higher values indicate better performance
+  - Primary metric for comparing implementations
+
+- **Latency** (measured in milliseconds):
+  - **Average (Latency_Avg)**: The mean response time across all requests
+  - **Median (Latency_P50)**: The 50th percentile response time (half of all requests were faster)
+  - **P99 Latency (Latency_P99)**: The 99th percentile response time (99% of requests were faster)
+  - Collected using precise timestamp differentials in Autocannon
+
+- **Rate Limit Hits (RateLimitHits)**:
+  - Number of requests that triggered the rate limiter
+  - Tracked by the server middleware and reported in benchmark results
+  - Indicates rate limiting effectiveness and algorithm efficiency
+  - Important for understanding throttling behavior differences between implementations
+
+- **System Resources**:
+  - **CPU Usage (CPUUsage)**: 
+    - Average CPU utilization percentage during the benchmark
+    - Measured using Node.js `process.cpuUsage()` API
+    - Sampled at 1-second intervals and averaged
+  
+  - **Memory Usage (MemoryUsage)**: 
+    - Average memory consumption in bytes
+    - Measured using Node.js `process.memoryUsage()` API's heapUsed value
+    - Sampled at 1-second intervals and averaged
+
+- **Error Metrics**:
+  - **Connection Errors**: Number of failed connection attempts
+  - **Timeouts**: Number of requests that didn't receive a response within the timeout period
+  - **Total Errors**: Sum of all error types
+  - Collected and aggregated across all test runs for comprehensive error analysis
+
+### Raw Data Format
+
+The raw results are stored as JSON files with the following structure:
+```json
+{
+  "requests": {
+    "average": 6064837,    // Average requests/second
+    "total": 909725425     // Total requests processed
+  },
+  "latency": {
+    "average": 2.04,       // Average latency in ms
+    "p50": 2.00,           // Median latency
+    "p99": 3.00            // 99th percentile latency
+  },
+  "rate_limit_hits": 3173724,
+  "cpu_usage": 53.30,
+  "memory_usage": 348431360,
+  "errors": 0,
+  "timeouts": 0,
+  "totalErrors": 0,
+  "duration": 150          // Test duration in seconds
+}
+```
+
+This data is processed by `scripts/generate_report.py` to create both comprehensive HTML reports with visualizations and CSV summaries for data analysis.
 
 ## Benchmark Methodology and Results Processing
 
-To ensure statistical significance and account for system variability, each benchmark configuration is run multiple times (typically three iterations). This approach minimizes the impact of outliers and transient system behavior.
+To ensure statistical significance and account for system variability, the benchmarking system follows a multi-stage process:
 
-The data processing methodology follows these steps:
+### Test Execution
 
 1. **Multiple Iterations**: Each benchmark configuration (client/workload/concurrency combination) is executed three consecutive times with identical parameters.
-2. **Median Selection**: For each performance metric, the median value from all runs is selected for the final report, providing a more stable representation than a single run or a mean value that could be skewed by outliers.
-3. **Consistency Verification**: Standard deviation is calculated across runs to ensure test stability. High variance may indicate unstable test conditions and is flagged in the report.
-4. **Comparative Analysis**: Percentage differences between implementations are calculated to highlight relative performance characteristics.
+2. **Warmup Phase**: Before each test run, a 10-second warmup period allows the system to stabilize. This data is discarded.
+3. **Test Phase**: The actual benchmark runs for the configured duration, collecting metrics throughout the test.
+4. **Cooldown Periods**:
+   - 5-second cooldown between test configurations
+   - 10-second cooldown between different client implementations
 
-This methodology ensures the benchmark results are:
+### Data Processing
+
+1. **Median Selection**: For each configuration, results are sorted by throughput, and the median run is selected. This approach:
+   - Minimizes the impact of outliers and anomalies
+   - Provides a more representative view than a single run or average
+   - Ensures consistent measurement across all configurations
+
+2. **Result Aggregation**: The `generate_report.py` script processes all JSON result files to:
+   - Extract relevant metrics from the median runs
+   - Group results by client, mode, workload, and concurrency
+   - Calculate comparative statistics across implementations
+   - Generate visualizations showing performance trends
+
+3. **Error Analysis**: The script aggregates error data across all runs to identify:
+   - Total error counts by configuration
+   - Distribution of error types (connection failures vs. timeouts)
+   - Correlation between errors and performance impacts
+
+4. **Chart Generation**: Performance metrics are visualized in multiple ways:
+   - Bar charts comparing clients across different concurrency levels
+   - Throughput and latency trends as concurrency increases
+   - Resource utilization patterns during benchmark load
+   - Rate limit hit patterns across different configurations
+
+This methodology ensures that the benchmark results are:
 
 - **Reproducible**: Multiple runs increase confidence in the measurements
 - **Representative**: Median values avoid skew from outliers
 - **Comparable**: Consistent methodology across all client implementations
+- **Comprehensive**: Multiple metrics provide a holistic performance view
+
+## Report Generation Process
+
+The benchmark includes a sophisticated report generation system using `scripts/generate_report.py` that transforms raw benchmark data into informative visualizations:
+
+### Data Processing Pipeline
+
+1. **Results Collection**: The script first scans the results directory for all JSON files generated during benchmark runs.
+
+2. **Metadata Extraction**: Each result filename (e.g., `valkey-glide_light_100c_30s_run1.json`) is parsed to extract:
+   - Implementation (valkey-glide, iovalkey, ioredis)
+   - Mode (standalone or cluster)
+   - Request type (light or heavy)
+   - Concurrency level (50, 100, 500, etc.)
+   - Duration (test length in seconds)
+   - Run number (statistical repetition)
+
+3. **Grouping & Statistical Analysis**:
+   - Results are grouped by implementation, mode, request type, concurrency
+   - For each configuration, multiple runs are analyzed to find the median throughput run
+   - This median run is selected as the representative sample
+   - Additional statistics like min/max and standard deviation are calculated
+
+4. **Chart Generation**: The script generates multiple chart types:
+   - **Throughput charts**: Comparing requests per second across clients
+   - **Latency charts**: Average, median, and P99 latency comparisons
+   - **Resource usage charts**: CPU and memory consumption visualization
+   - **Rate limit hits charts**: Showing how many requests were rate-limited
+
+5. **Report Types**:
+   - **HTML Reports**: Interactive dashboard with charts, tables, and analysis
+   - **CSV Summaries**: Raw data in tabular format for custom analysis
+   - **Error Analysis**: Tables showing error patterns across configurations
+
+### Visualization Features
+
+The generated HTML report includes:
+
+- **Interactive charts** with hover tooltips showing precise values
+- **Tabular data** for different modes (standalone vs. cluster)
+- **Color-coded performance indicators** highlighting best results
+- **Error summaries** showing reliability data across all runs
+- **Trend analysis** for configurations with multiple data points
+- **Performance comparison section** showing relative differences
+
+To generate a new report from the latest benchmark results:
+
+```bash
+python3 scripts/generate_report.py ./results/latest
+```
+
+For comparison reports combining multiple benchmark runs:
+
+```bash
+python3 scripts/generate_report.py --compare-runs ./results
+```
+
+For trending analysis across historical runs:
+
+```bash
+python3 scripts/generate_report.py --include-trends --compare-runs ./results
+```
+
+The resulting report is saved as `./results/latest/report/index.html` and can be opened in any modern browser.
+
+## Understanding the Results
+
+### Key Performance Indicators
+
+1. **Throughput (ReqPerSec)**:
+   - Primary performance indicator
+   - Higher values indicate better performance
+   - Affected by both client efficiency and rate limiting behavior
+
+2. **Latency**:
+   - Lower values indicate better responsiveness
+   - P99 latency demonstrates worst-case scenario performance
+   - Critical for understanding user experience under load
+
+3. **Rate Limit Hits**:
+   - Indicates how many requests were rate-limited
+   - Higher values show more aggressive rate limiting
+   - Important for understanding throttling behavior
+
+4. **Resource Usage**:
+   - CPU and memory consumption show efficiency
+   - Lower resource usage with higher throughput indicates better implementation
+   - Helps identify potential bottlenecks
+
+### Performance Trade-offs
+
+- **Throughput vs. Latency**: Some implementations might achieve high throughput at the cost of increased latency
+- **Resource Usage vs. Performance**: Higher performance might require more CPU/memory resources
+- **Standalone vs. Cluster**: Cluster configurations add coordination overhead but provide higher availability
 
 ## Results Structure
 
@@ -243,6 +551,7 @@ results/
 │   ├── README.md               # Run-specific details
 │   ├── {implementation}_{workload}_{connections}c_{duration}s_run{N}.json      # Raw data
 │   └── {implementation}_{workload}_{connections}c_{duration}s_run{N}.json.log  # Logs
+│   └── report/                 # Generated HTML reports and visualizations
 └── latest -> YYYYMMDD_HHMMSS/  # Symlink to most recent run
 ```
 
@@ -258,15 +567,19 @@ Example result file: `valkey-glide_light_100c_30s_run1.json`
 │   ├── YYYYMMDD_HHMMSS/               # Timestamp-based directories
 │   └── latest -> YYYYMMDD_HHMMSS/     # Symlink to latest run
 ├── scripts/
+│   ├── check-config.sh                # System configuration checker
+│   ├── docker-to-podman.sh            # Docker-to-Podman compatibility wrapper
 │   ├── fix-network.sh                 # Docker network troubleshooting
 │   ├── generate_report.py             # Python report generator
 │   ├── run-all.sh                     # Main benchmark orchestration
-│   └── run-benchmark.sh               # Individual benchmark runner
+│   ├── run-benchmark.sh               # Individual benchmark runner
+│   └── setup-podman.sh                # Podman environment setup
 ├── src/
 │   ├── benchmark/                     # Benchmark code
 │   │   ├── autocannon.ts              # HTTP benchmarking using autocannon
 │   │   ├── index.ts                   # Benchmark entry point
-│   │   └── monitor.ts                 # Resource monitoring utilities
+│   │   ├── monitor.ts                 # Resource monitoring utilities
+│   │   └── results.ts                 # Results processing
 │   └── server/                        # Server implementation
 │       ├── config/                    # Server configuration
 │       ├── lib/                       # Core libraries and utilities
@@ -304,6 +617,18 @@ Example result file: `valkey-glide_light_100c_30s_run1.json`
     docker-compose down -v
     docker-compose -f docker-compose-redis-cluster.yml down -v
     docker-compose -f docker-compose-valkey-cluster.yml down -v
+    ```
+
+- **System Configuration**: Check your system's configuration for benchmark compatibility:
+
+    ```bash
+    ./scripts/check-config.sh
+    ```
+
+- **Podman Setup**: If using Podman instead of Docker:
+
+    ```bash
+    ./scripts/setup-podman.sh
     ```
 
 ## Contributing
