@@ -1271,9 +1271,13 @@ def process_single_directory(results_dir):
             latency_p99 = safe_float(result_json.get("latency", {}).get("p99", 0))
 
             # Additional metrics
-            rate_limit_hits = safe_float(result_json.get("rate_limit_hits", 0))
-            cpu_usage = safe_float(result_json.get("cpu_usage", 0))
-            memory_usage = safe_float(result_json.get("memory_usage", 0))
+            rate_limit_hits = safe_float(result_json.get("rateLimitHits", 0))
+            cpu_usage = safe_float(
+                result_json.get("resources", {}).get("cpu", {}).get("average", 0)
+            )
+            memory_usage = safe_float(
+                result_json.get("resources", {}).get("memory", {}).get("average", 0)
+            )
             errors = result_json.get('errors', 0)
             timeouts = result_json.get('timeouts', 0)
             total_errors = result_json.get(
@@ -1375,8 +1379,18 @@ def extract_median_results(results_base_dir, output_dir):
                     continue
 
                 throughput = get_throughput_from_json(filepath)
-                if throughput <= 0:
+                # Allow zero throughput files for analysis (e.g., failed cluster runs)
+                if throughput < 0:
                     continue
+
+                # Extract rateLimitHits to detect failed runs
+                rate_limit_hits = 0
+                try:
+                    with open(filepath, "r") as f:
+                        result_json = json.load(f)
+                    rate_limit_hits = result_json.get("rateLimitHits", 0)
+                except Exception:
+                    rate_limit_hits = 0
 
                 config_key = (client_name, mode, req_type, concurrency, file_duration)
                 if config_key not in config_files:
@@ -1386,6 +1400,7 @@ def extract_median_results(results_base_dir, output_dir):
                     {
                         "filepath": filepath,
                         "throughput": throughput,
+                        "rate_limit_hits": rate_limit_hits,
                         "filename": json_file,
                         "run_timestamp": run_dir,
                         "implementation": implementation,
@@ -1396,16 +1411,73 @@ def extract_median_results(results_base_dir, output_dir):
                 print(f"    Warning: Error processing {json_file}: {e}")
                 continue
 
+    # Check for configurations where all runs failed (all have zero rateLimitHits)
+    failed_configs = []
+    for config_key, files in config_files.items():
+        client_name, mode, req_type, concurrency, file_duration = config_key
+        all_zero_rate_limits = all(
+            file_info["rate_limit_hits"] == 0 for file_info in files
+        )
+
+        if all_zero_rate_limits and len(files) > 0:
+            failed_configs.append(
+                {
+                    "config": config_key,
+                    "files": files,
+                    "reason": "All runs have zero rateLimitHits - rate limiting not working",
+                }
+            )
+
+    # Report failed configurations as errors
+    if failed_configs:
+        print(
+            f"\n❌ ERROR: Found {len(failed_configs)} configurations where all runs failed:"
+        )
+        for failed_config in failed_configs:
+            client_name, mode, req_type, concurrency, file_duration = failed_config[
+                "config"
+            ]
+            files = failed_config["files"]
+            print(
+                f"  - {client_name} {mode} {req_type} {concurrency}c {file_duration}s:"
+            )
+            print(f"    Reason: {failed_config['reason']}")
+            print(f"    Files checked: {len(files)}")
+            for file_info in files:
+                print(
+                    f"      {file_info['filename']}: throughput={file_info['throughput']:.1f}, rateLimitHits={file_info['rate_limit_hits']}"
+                )
+            print()
+
+        # Don't raise an exception, but clearly mark these as failed
+        print("⚠️  These configurations will be excluded from median extraction.")
+        print(
+            "⚠️  This indicates a fundamental issue with rate limiting in these configurations."
+        )
+        print()
+
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # For each configuration, find median and copy file
+    # For each configuration, find median and copy file (excluding failed configs)
     median_files_copied = 0
     total_configs = len(config_files)
 
     print(f"\nExtracting median files for {total_configs} configurations...")
 
     for config_key, files in config_files.items():
+        # Skip configurations where all runs failed (zero rateLimitHits)
+        client_name, mode, req_type, concurrency, file_duration = config_key
+        all_zero_rate_limits = all(
+            file_info["rate_limit_hits"] == 0 for file_info in files
+        )
+
+        if all_zero_rate_limits:
+            print(
+                f"  Skipping failed config: {client_name} {mode} {req_type} {concurrency}c {file_duration}s"
+            )
+            continue
+
         if len(files) < 2:
             print(
                 f"  Warning: Only {len(files)} files found for config {config_key}, skipping"
