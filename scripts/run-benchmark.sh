@@ -42,32 +42,242 @@ DEFAULT_REQUEST_TYPES=("light" "heavy")
 
 DEFAULT_RATE_LIMITER_TYPES=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cluster" "iovalkey:cluster" "ioredis:cluster")
 
-# Parse command line arguments (unchanged)
+# --- Helper Functions ---
 
-# Use environment variables if set, otherwise positional args, otherwise defaults
-duration=${BENCHMARK_DURATION:-${DURATION:-${1:-$DEFAULT_DURATION}}}
+show_help() {
+    cat << EOF
+Usage: \$0 [OPTIONS]
 
-# Handle concurrency levels properly
-if [ -n "$CONCURRENCY" ]; then
-    concurrency_levels=($CONCURRENCY)
-elif [ -n "$2" ]; then
-    concurrency_levels=($2)
-else
-    concurrency_levels=(${DEFAULT_CONCURRENCY_LEVELS[@]})
+DESCRIPTION:
+    Runs rate limiter benchmarks with configurable parameters.
+    
+    If no options are provided, the script will start in interactive mode.
+
+OPTIONS:
+    --time, --duration SECONDS      Duration in seconds for each test
+    --concurrency "LEVELS"          Space-separated concurrency levels (e.g., "50 100 500")
+    --requests "TYPES"              Space-separated request types: light, heavy (e.g., "light heavy")
+    --limiters "TYPES"              Space-separated rate limiter types (see available types below)
+    
+    --defaults, --default           Use default configuration (30s, all concurrency levels, all types)
+    --clusters, --cluster-only      Test cluster configurations only (150s duration, with 1000 concurrency)
+    --standalone, --standalone-only Test standalone configurations only (120s duration, up to 500 concurrency)
+    --quick, --quick-mode          Quick test mode (30s, limited concurrency and types)
+    
+    --interactive, -i              Force interactive mode
+    -h, --help                     Show this help message and exit
+
+AVAILABLE RATE LIMITER TYPES:
+    Standalone modes:
+    - valkey-glide      Valkey with Glide client (standalone)
+    - iovalkey          Valkey with IOValkey client (standalone)
+    - ioredis           Redis with IORedis client (standalone)
+    
+    Cluster modes:
+    - valkey-glide:cluster   Valkey with Glide client (cluster)
+    - iovalkey:cluster       Valkey with IOValkey client (cluster)
+    - ioredis:cluster        Redis with IORedis client (cluster)
+
+EXAMPLES:
+    \$0                                                    # Interactive mode
+    \$0 --defaults                                         # Run with all defaults
+    \$0 --clusters                                         # Test cluster configurations only
+    \$0 --standalone                                       # Test standalone configurations only
+    \$0 --quick                                           # Quick test mode
+    
+    \$0 --time 60 --concurrency "50 100" --requests "light" --limiters "valkey-glide ioredis"
+    \$0 --duration 120 --limiters "valkey-glide:cluster iovalkey:cluster"
+    \$0 --quick --limiters "valkey-glide"
+
+PRESET CONFIGURATIONS:
+    --defaults:     30s duration, concurrency: 50 100 500 1000, all request types, all limiters
+    --clusters:     150s duration, concurrency: 50 100 500 1000, all request types, cluster limiters only
+    --standalone:   120s duration, concurrency: 50 100 500, all request types, standalone limiters only
+    --quick:        30s duration, concurrency: 50 100, light requests only, valkey-glide + iovalkey only
+
+ENVIRONMENT VARIABLES (still supported):
+    COMPUTATION_COMPLEXITY Set computational complexity (default: 10)
+    DEBUG_MODE             Enable debug logging (true/false)
+    SKIP_LONG_TESTS        Override test duration to 30s (true/false)
+    SKIP_CONTAINER_SETUP   Use existing containers (true/false)
+
+RESULTS:
+    Results are saved to: ./results/YYYYMMDD_HHMMSS/
+    Each test produces:
+    - JSON results file with performance metrics
+    - Log file with detailed execution information
+    - README.md with test configuration summary
+
+INTERACTIVE MODE:
+    If no options are provided, the script will guide you through selecting:
+    - Test duration
+    - Concurrency levels
+    - Request types
+    - Rate limiter types
+    - Additional options
+EOF
+}
+
+# Parse command line arguments with proper flags
+
+# Initialize variables with no defaults - we'll set them based on flags
+duration=""
+concurrency_levels=""
+request_types=""
+rate_limiter_types=""
+interactive_mode=false
+use_defaults=false
+clusters_only=false
+standalone_only=false
+quick_mode=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --time|--duration)
+            if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                echo "ERROR: --time requires a value (seconds)" >&2
+                exit 1
+            fi
+            duration="$2"
+            shift 2
+            ;;
+        --concurrency)
+            if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                echo "ERROR: --concurrency requires values (e.g., '50 100 500')" >&2
+                exit 1
+            fi
+            concurrency_levels="$2"
+            shift 2
+            ;;
+        --requests|--request-types)
+            if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                echo "ERROR: --requests requires values (e.g., 'light heavy')" >&2
+                exit 1
+            fi
+            request_types="$2"
+            shift 2
+            ;;
+        --limiters|--rate-limiters)
+            if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                echo "ERROR: --limiters requires values (e.g., 'valkey-glide ioredis')" >&2
+                exit 1
+            fi
+            rate_limiter_types="$2"
+            shift 2
+            ;;
+        --defaults|--default)
+            use_defaults=true
+            shift
+            ;;
+        --clusters|--cluster-only)
+            clusters_only=true
+            shift
+            ;;
+        --standalone|--standalone-only)
+            standalone_only=true
+            shift
+            ;;
+        --quick|--quick-mode)
+            quick_mode=true
+            shift
+            ;;
+        --interactive|-i)
+            interactive_mode=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate conflicting options
+if [[ "$clusters_only" == true && "$standalone_only" == true ]]; then
+    echo "ERROR: Cannot use --clusters and --standalone together" >&2
+    exit 1
 fi
 
-request_types_str=${BENCHMARK_REQUEST_TYPES:-${REQUEST_TYPES:-${3:-"${DEFAULT_REQUEST_TYPES[*]}"}}}
-# Split the string into an array
-read -r -a request_types <<< "$request_types_str"
+# If no arguments provided, start interactive mode
+if [[ "$use_defaults" == false && "$clusters_only" == false && "$standalone_only" == false && 
+      -z "$duration" && -z "$concurrency_levels" && -z "$request_types" && -z "$rate_limiter_types" && 
+      "$interactive_mode" == false && "$quick_mode" == false ]]; then
+    interactive_mode=true
+fi
 
-# Handle rate limiter types properly
-if [ -n "$RATE_LIMITER_TYPES" ]; then
-    # Convert space-separated string to array
-    read -r -a rate_limiter_types <<< "$RATE_LIMITER_TYPES"
-elif [ -n "$4" ]; then
-    rate_limiter_types=($4)
-else
-    rate_limiter_types=(${DEFAULT_RATE_LIMITER_TYPES[@]})
+# Set defaults or preset configurations
+if [[ "$use_defaults" == true ]]; then
+    duration=${duration:-$DEFAULT_DURATION}
+    concurrency_levels=${concurrency_levels:-"${DEFAULT_CONCURRENCY_LEVELS[*]}"}
+    request_types=${request_types:-"${DEFAULT_REQUEST_TYPES[*]}"}
+    rate_limiter_types=${rate_limiter_types:-"${DEFAULT_RATE_LIMITER_TYPES[*]}"}
+elif [[ "$clusters_only" == true ]]; then
+    duration=${duration:-150}
+    concurrency_levels=${concurrency_levels:-"50 100 500 1000"}
+    request_types=${request_types:-"light heavy"}
+    rate_limiter_types=${rate_limiter_types:-"valkey-glide:cluster iovalkey:cluster ioredis:cluster"}
+elif [[ "$standalone_only" == true ]]; then
+    duration=${duration:-120}
+    concurrency_levels=${concurrency_levels:-"50 100 500"}
+    request_types=${request_types:-"light heavy"}
+    rate_limiter_types=${rate_limiter_types:-"valkey-glide iovalkey ioredis"}
+elif [[ "$quick_mode" == true ]]; then
+    duration=${duration:-30}
+    concurrency_levels=${concurrency_levels:-"50 100"}
+    request_types=${request_types:-"light"}
+    rate_limiter_types=${rate_limiter_types:-"valkey-glide iovalkey"}
+fi
+
+# Convert string values to arrays (for non-interactive mode)
+if [[ "$interactive_mode" == false ]]; then
+    # Validate that all required values are set
+    if [[ -z "$duration" || -z "$concurrency_levels" || -z "$request_types" || -z "$rate_limiter_types" ]]; then
+        echo "ERROR: Missing required parameters. Use --help for usage information" >&2
+        exit 1
+    fi
+    
+    # Convert to arrays
+    read -r -a concurrency_levels <<< "$concurrency_levels"
+    read -r -a request_types <<< "$request_types"
+    read -r -a rate_limiter_types <<< "$rate_limiter_types"
+    
+    # Validate duration is a number
+    if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: Duration must be a positive integer (seconds)" >&2
+        exit 1
+    fi
+    
+    # Validate concurrency levels are numbers
+    for level in "${concurrency_levels[@]}"; do
+        if ! [[ "$level" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Concurrency levels must be positive integers" >&2
+            exit 1
+        fi
+    done
+    
+    # Validate request types
+    for req_type in "${request_types[@]}"; do
+        if [[ "$req_type" != "light" && "$req_type" != "heavy" ]]; then
+            echo "ERROR: Request types must be 'light' or 'heavy'" >&2
+            exit 1
+        fi
+    done
+    
+    # Validate rate limiter types
+    valid_limiters=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cluster" "iovalkey:cluster" "ioredis:cluster")
+    for limiter in "${rate_limiter_types[@]}"; do
+        if [[ ! " ${valid_limiters[*]} " =~ " ${limiter} " ]]; then
+            echo "ERROR: Invalid rate limiter type: $limiter" >&2
+            echo "Valid types: ${valid_limiters[*]}" >&2
+            exit 1
+        fi
+    done
 fi
 
 # --- Helper Functions ---
@@ -79,6 +289,155 @@ echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 log_success() {
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] SUCCESS: $1" | tee -a "$LOG_FILE"
 }
+
+# Interactive mode function
+run_interactive_mode() {
+    echo "=== Rate Limiter Benchmark - Interactive Mode ==="
+    echo ""
+    
+    # Duration selection
+    echo "1. Select test duration:"
+    echo "   1) 30 seconds (quick)"
+    echo "   2) 60 seconds (standard)"
+    echo "   3) 120 seconds (thorough)"
+    echo "   4) Custom duration"
+    echo -n "Choose duration [1-4] (default: 1): "
+    read -r duration_choice
+    
+    case "$duration_choice" in
+        2) duration=60 ;;
+        3) duration=120 ;;
+        4) 
+            echo -n "Enter custom duration in seconds: "
+            read -r duration
+            if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
+                echo "Invalid duration. Using default of 30 seconds."
+                duration=30
+            fi
+            ;;
+        *) duration=30 ;;
+    esac
+    
+    # Concurrency selection
+    echo ""
+    echo "2. Select concurrency levels:"
+    echo "   1) Light load (50, 100)"
+    echo "   2) Medium load (50, 100, 500)"
+    echo "   3) Heavy load (50, 100, 500, 1000)"
+    echo "   4) Custom levels"
+    echo -n "Choose concurrency [1-4] (default: 2): "
+    read -r concurrency_choice
+    
+    case "$concurrency_choice" in
+        1) concurrency_levels=(50 100) ;;
+        3) concurrency_levels=(50 100 500 1000) ;;
+        4)
+            echo -n "Enter concurrency levels (space-separated, e.g., '50 100 200'): "
+            read -r -a concurrency_levels
+            if [ ${#concurrency_levels[@]} -eq 0 ]; then
+                echo "No concurrency levels provided. Using default."
+                concurrency_levels=(50 100 500)
+            fi
+            ;;
+        *) concurrency_levels=(50 100 500) ;;
+    esac
+    
+    # Request types selection
+    echo ""
+    echo "3. Select request types:"
+    echo "   1) Light requests only"
+    echo "   2) Heavy requests only"
+    echo "   3) Both light and heavy requests"
+    echo -n "Choose request types [1-3] (default: 3): "
+    read -r request_choice
+    
+    case "$request_choice" in
+        1) request_types=("light") ;;
+        2) request_types=("heavy") ;;
+        *) request_types=("light" "heavy") ;;
+    esac
+    
+    # Rate limiter types selection
+    echo ""
+    echo "4. Select rate limiter types:"
+    echo "   1) Standalone only (valkey-glide, iovalkey, ioredis)"
+    echo "   2) Cluster only (valkey-glide:cluster, iovalkey:cluster, ioredis:cluster)"
+    echo "   3) All types (standalone + cluster)"
+    echo "   4) Valkey only (valkey-glide + valkey-glide:cluster)"
+    echo "   5) Redis only (ioredis + ioredis:cluster)"
+    echo "   6) Custom selection"
+    echo -n "Choose rate limiter types [1-6] (default: 1): "
+    read -r limiter_choice
+    
+    case "$limiter_choice" in
+        1) rate_limiter_types=("valkey-glide" "iovalkey" "ioredis") ;;
+        2) rate_limiter_types=("valkey-glide:cluster" "iovalkey:cluster" "ioredis:cluster") ;;
+        3) rate_limiter_types=("valkey-glide" "iovalkey" "ioredis" "valkey-glide:cluster" "iovalkey:cluster" "ioredis:cluster") ;;
+        4) rate_limiter_types=("valkey-glide" "valkey-glide:cluster") ;;
+        5) rate_limiter_types=("ioredis" "ioredis:cluster") ;;
+        6)
+            echo ""
+            echo "Available rate limiter types:"
+            echo "  - valkey-glide"
+            echo "  - iovalkey"
+            echo "  - ioredis"
+            echo "  - valkey-glide:cluster"
+            echo "  - iovalkey:cluster"
+            echo "  - ioredis:cluster"
+            echo -n "Enter rate limiter types (space-separated): "
+            read -r -a rate_limiter_types
+            if [ ${#rate_limiter_types[@]} -eq 0 ]; then
+                echo "No rate limiter types provided. Using default."
+                rate_limiter_types=("valkey-glide" "iovalkey" "ioredis")
+            fi
+            ;;
+        *) rate_limiter_types=("valkey-glide" "iovalkey" "ioredis") ;;
+    esac
+    
+    # Additional options
+    echo ""
+    echo "5. Additional options:"
+    echo -n "Enable debug mode? [y/N]: "
+    read -r debug_choice
+    if [[ "$debug_choice" =~ ^[Yy]$ ]]; then
+        export DEBUG_MODE=true
+    fi
+    
+    echo -n "Run quick tests only (30s max)? [y/N]: "
+    read -r quick_choice
+    if [[ "$quick_choice" =~ ^[Yy]$ ]]; then
+        export SKIP_LONG_TESTS=true
+        duration=30
+    fi
+    
+    # Summary
+    echo ""
+    echo "=== Configuration Summary ==="
+    echo "Duration: ${duration}s per test"
+    echo "Concurrency levels: ${concurrency_levels[*]}"
+    echo "Request types: ${request_types[*]}"
+    echo "Rate limiter types: ${rate_limiter_types[*]}"
+    echo "Debug mode: ${DEBUG_MODE:-false}"
+    echo "Quick tests: ${SKIP_LONG_TESTS:-false}"
+    echo ""
+    echo -n "Proceed with these settings? [Y/n]: "
+    read -r proceed_choice
+    
+    if [[ "$proceed_choice" =~ ^[Nn]$ ]]; then
+        echo "Benchmark cancelled."
+        exit 0
+    fi
+    
+    echo ""
+    echo "Starting benchmark with selected configuration..."
+}
+
+# Check if we should run interactive mode
+if [[ "$interactive_mode" == true ]]; then
+    run_interactive_mode
+fi
+
+# --- Helper Functions ---
 
 ensure_network() {
     log "Ensuring Podman network '$BENCHMARK_NETWORK' exists..."
@@ -242,7 +601,7 @@ cat > "$README_FILE" << EOF
 - **Memory:** $(free -h | grep Mem | awk '{print $2}')
 - **OS:** $(uname -srm)
 - **Kernel:** $(uname -r)
-- **Docker Version:** $(docker --version)
+- **Podman Version:** $(podman --version)
 
 ## Testing Methodology
 
@@ -268,11 +627,11 @@ log "- Request types: ${request_types[*]}"
 log "- Rate limiter types: ${rate_limiter_types[*]}"
 log "- Results will be saved to: ${RESULTS_DIR_HOST}"
 
-# --- Build Docker Images ---
-log "Building server Docker image ($SERVER_IMAGE_TAG)..."
+# --- Build Container Images ---
+log "Building server container image ($SERVER_IMAGE_TAG)..."
 podman build -t "$SERVER_IMAGE_TAG" -f Dockerfile.server .
 
-log "Building loadtest Docker image ($LOADTEST_IMAGE_TAG)..."
+log "Building loadtest container image ($LOADTEST_IMAGE_TAG)..."
 podman build -t "$LOADTEST_IMAGE_TAG" -f Dockerfile.loadtest .
 
 # --- Main Test Loop ---
@@ -324,7 +683,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         fi
 
         if [ ! -f "$CURRENT_COMPOSE_FILE" ]; then
-            log "ERROR: Docker compose file $CURRENT_COMPOSE_FILE not found."
+            log "ERROR: Compose file $CURRENT_COMPOSE_FILE not found."
             exit 1
         fi
     fi
@@ -341,13 +700,13 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         log "Using project name: $BENCHMARK_MANAGED_PROJECT_NAME"
 
 
-        docker-compose -f "$CURRENT_COMPOSE_FILE" -p "$BENCHMARK_MANAGED_PROJECT_NAME" up -d --force-recreate
+        podman-compose -f "$CURRENT_COMPOSE_FILE" -p "$BENCHMARK_MANAGED_PROJECT_NAME" up -d --force-recreate
 
         get_actual_container_names "$db_tech"
 
         if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
              log "Connecting $ACTUAL_DB_CONTAINER to network $BENCHMARK_NETWORK..."
-             docker network connect "$BENCHMARK_NETWORK" "$ACTUAL_DB_CONTAINER" 2>/dev/null || true
+             podman network connect "$BENCHMARK_NETWORK" "$ACTUAL_DB_CONTAINER" 2>/dev/null || true
         else
              log "WARNING: Could not detect standalone container name after compose up to connect to network."
         fi
@@ -375,7 +734,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                         cli_command="redis-cli"
                     fi
                     
-                    if docker exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                    if podman exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
                         log "Database container $ACTUAL_DB_CONTAINER is ready!"
                         db_ready=true
                         break
@@ -395,7 +754,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                         cli_command="redis-cli"
                     fi
                     
-                    if docker exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
+                    if podman exec "$ACTUAL_DB_CONTAINER" $cli_command -p "$db_port" PING 2>/dev/null | grep -q "PONG"; then
                         log "Database container $ACTUAL_DB_CONTAINER is ready!"
                         db_ready=true
                         break
@@ -409,7 +768,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
             if [ "$db_ready" = false ]; then
                 log "WARNING: Database ($ACTUAL_DB_CONTAINER) may not be fully ready after $max_db_wait attempts, but continuing..."
                 log "Database container status:"
-                docker ps | grep "$ACTUAL_DB_CONTAINER" || true
+                podman ps | grep "$ACTUAL_DB_CONTAINER" || true
                 if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
                     podman logs "$ACTUAL_DB_CONTAINER" | tail -20
                 fi
@@ -422,7 +781,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         else
             if [[ -n "$ACTUAL_DB_CONTAINER" ]]; then
                 log "Verifying connection to $ACTUAL_DB_CONTAINER"
-                if docker exec "$ACTUAL_DB_CONTAINER" redis-cli PING 2>/dev/null | grep -q "PONG"; then
+                if podman exec "$ACTUAL_DB_CONTAINER" redis-cli PING 2>/dev/null | grep -q "PONG"; then
                     log "Successfully verified connection to $ACTUAL_DB_CONTAINER"
                 else
                     log "WARNING: Could not verify connection to $ACTUAL_DB_CONTAINER"
@@ -503,11 +862,11 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         PROJECT_PREFIX=${COMPOSE_PROJECT_NAME:-ratelimit_bench}
 
         if [[ "$db_tech" == "redis" ]]; then
-            REDIS_CLUSTER_NODES="redis-cluster-pod:6380,redis-cluster-pod:6381,redis-cluster-pod:6382,redis-cluster-pod:6383,redis-cluster-pod:6384,redis-cluster-pod:6385"
+            REDIS_CLUSTER_NODES="${PROJECT_PREFIX}-redis-node1:6379,${PROJECT_PREFIX}-redis-node2:6379,${PROJECT_PREFIX}-redis-node3:6379,${PROJECT_PREFIX}-redis-node4:6379,${PROJECT_PREFIX}-redis-node5:6379,${PROJECT_PREFIX}-redis-node6:6379"
             server_env_vars+=(-e "REDIS_CLUSTER_NODES=${REDIS_CLUSTER_NODES}")
             log "REDIS_CLUSTER_NODES set to: ${REDIS_CLUSTER_NODES}"
         elif [[ "$db_tech" == "valkey" ]]; then
-            VALKEY_CLUSTER_NODES="valkey-cluster-pod:7000,valkey-cluster-pod:7001,valkey-cluster-pod:7002,valkey-cluster-pod:7003,valkey-cluster-pod:7004,valkey-cluster-pod:7005"
+            VALKEY_CLUSTER_NODES="${PROJECT_PREFIX}-valkey-node1:8080,${PROJECT_PREFIX}-valkey-node2:8080,${PROJECT_PREFIX}-valkey-node3:8080,${PROJECT_PREFIX}-valkey-node4:8080,${PROJECT_PREFIX}-valkey-node5:8080,${PROJECT_PREFIX}-valkey-node6:8080"
             server_env_vars+=(-e "VALKEY_CLUSTER_NODES=${VALKEY_CLUSTER_NODES}")
             log "VALKEY_CLUSTER_NODES set to: ${VALKEY_CLUSTER_NODES}"
         fi
@@ -532,8 +891,8 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
     log "Network: $BENCHMARK_NETWORK"
     log "Env Vars: ${server_env_vars[@]}"
 
-    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
 
     # Pass COMPUTATION_COMPLEXITY environment variable if it exists
     if [[ -n "$COMPUTATION_COMPLEXITY" ]]; then
@@ -581,27 +940,27 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
         podman logs "$SERVER_CONTAINER_NAME" || true
         
         log "Network information:"
-        docker network inspect "$BENCHMARK_NETWORK" || true
+        podman network inspect "$BENCHMARK_NETWORK" || true
         
         log "Database connection information:"
         if [[ "$use_cluster" == "true" ]]; then
             log "Trying to ping cluster nodes..."
             if [[ "$db_tech" == "redis" ]]; then
                 for i in {1..6}; do
-                    docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-node$i-1" || true
+                    podman exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-node$i-1" || true
                 done
             elif [[ "$db_tech" == "valkey" ]]; then
                 for i in {1..6}; do
-                    docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-node$i-1" || true
+                    podman exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-node$i-1" || true
                 done
             fi
         else
             if [[ "$db_tech" == "redis" ]]; then
                 log "Trying to ping Redis container..."
-                docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-1" || true
+                podman exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-redis-1" || true
             elif [[ "$db_tech" == "valkey" ]]; then
                 log "Trying to ping Valkey container..."
-                docker exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-1" || true
+                podman exec -i "$SERVER_CONTAINER_NAME" ping -c 1 "ratelimit_bench-valkey-1" || true
             fi
         fi
         
@@ -700,7 +1059,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                     warmup_container_name="${LOADTEST_CONTAINER_NAME}_warmup_${run_num}_${timestamp}" # Unique name per run
                     
                     # Ensure any existing container with similar name is removed first
-                    docker rm -f "${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" > /dev/null 2>&1 || true
+                    podman rm -f "${LOADTEST_CONTAINER_NAME}_warmup_${run_num}" > /dev/null 2>&1 || true
 
                     # Print the exact podman run command for debugging
                     log "Running warmup with command: podman run --name $warmup_container_name --network=$BENCHMARK_NETWORK ${warmup_env_vars[*]} $LOADTEST_IMAGE_TAG"
@@ -718,14 +1077,14 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                         podman logs "$warmup_container_name" 2>&1 | tee -a "$LOG_FILE" || log "Could not retrieve logs for failed warmup container."
                         log "=== End warmup container logs ==="
                         log "Network diagnostic information:"
-                        docker network inspect "$BENCHMARK_NETWORK" | grep -A 10 "Containers" | tee -a "$LOG_FILE"
+                        podman network inspect "$BENCHMARK_NETWORK" | grep -A 10 "Containers" | tee -a "$LOG_FILE"
                         log "Testing connectivity from warmup container to server:"
-                        docker exec -i "$warmup_container_name" ping -c 1 "$SERVER_CONTAINER_NAME" || log "Could not ping server from warmup container"
-                        docker rm "$warmup_container_name" > /dev/null 2>&1 || true
+                        podman exec -i "$warmup_container_name" ping -c 1 "$SERVER_CONTAINER_NAME" || log "Could not ping server from warmup container"
+                        podman rm "$warmup_container_name" > /dev/null 2>&1 || true
                         exit 1
                     fi
 
-                    docker rm "$warmup_container_name" > /dev/null 2>&1 || true
+                    podman rm "$warmup_container_name" > /dev/null 2>&1 || true
                     log "Warmup phase completed. Starting actual benchmark..."
                 else
                     log "Skipping warmup phase as WARMUP_DURATION is 0."
@@ -737,7 +1096,7 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
                 loadtest_container_name="${LOADTEST_CONTAINER_NAME}_run${run_num}" # Use run_num
                 
                 # Clean up any existing container with this name from previous benchmark runs
-                docker rm -f "$loadtest_container_name" > /dev/null 2>&1 || true
+                podman rm -f "$loadtest_container_name" > /dev/null 2>&1 || true
                 
                 # Ensure expansion treats each element as a separate argument
                 # Redirect stdout/stderr to the container log file
@@ -750,17 +1109,17 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
                 # Copy results from container regardless of exit code
                 # Copy the JSON file generated inside the container to the host JSON results file
-                docker cp "${loadtest_container_name}:/app/results/${test_id}.json" "$json_results_file" > /dev/null 2>&1 || log "WARNING: Could not copy results file ${test_id}.json from container ${loadtest_container_name}"
+                podman cp "${loadtest_container_name}:/app/results/${test_id}.json" "$json_results_file" > /dev/null 2>&1 || log "WARNING: Could not copy results file ${test_id}.json from container ${loadtest_container_name}"
 
                 if [ $loadtest_exit_code -ne 0 ]; then
                     log "ERROR: Loadtest container failed with exit code $loadtest_exit_code."
                     log "Loadtest container output saved to: $container_log_file" # Log the correct log file name
                     cat "$container_log_file" # Print the output for debugging
-                    docker rm "$loadtest_container_name" > /dev/null 2>&1 || true
+                    podman rm "$loadtest_container_name" > /dev/null 2>&1 || true
                     exit 1
                 fi
 
-                docker rm "$loadtest_container_name" > /dev/null 2>&1 || true
+                podman rm "$loadtest_container_name" > /dev/null 2>&1 || true
                 log "--- Test run $run_num completed. Results saved to $json_results_file (log: $container_log_file) ---" # Log both file names
 
                 # Cooldown between runs within the same configuration
@@ -781,15 +1140,15 @@ log "=== Testing rate limiter: $rate_limiter_type ==="
 
     # --- Cleanup after testing a specific rate limiter type ---
     log "Stopping server container..."
-    docker stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman stop "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman rm "$SERVER_CONTAINER_NAME" > /dev/null 2>&1 || true
     log "Server container stopped and removed."
 
     # --- Conditional Database Cleanup ---
     if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
         log "Stopping database container(s) for $rate_limiter_type (managed by run-benchmark.sh)..."
         if [[ -n "$CURRENT_COMPOSE_FILE" ]]; then
-            docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
+            podman-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
             log "Database containers from $CURRENT_COMPOSE_FILE stopped."
             CURRENT_COMPOSE_FILE="" # Reset compose file variable for the next iteration
         else
@@ -809,13 +1168,13 @@ done
 # --- Final Script Cleanup ---
 cleanup_final() {
     log "Performing final cleanup..."
-    docker stop "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
-    docker rm "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman stop "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
+    podman rm "$SERVER_CONTAINER_NAME" "$LOADTEST_CONTAINER_NAME" > /dev/null 2>&1 || true
 
     if [[ "$SKIP_CONTAINER_SETUP" != "true" ]]; then
         if [[ -n "$CURRENT_COMPOSE_FILE" ]]; then
              log "Final shutdown of database containers using $CURRENT_COMPOSE_FILE..."
-             docker-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
+             podman-compose -f "$CURRENT_COMPOSE_FILE" down -v --remove-orphans > /dev/null 2>&1
         fi
     fi
     log "Final cleanup complete."

@@ -14,7 +14,7 @@ volumes:
 
 services:
   valkey-node1:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1
     restart: on-failure:3
     command: >
@@ -34,7 +34,7 @@ services:
       retries: 3
 
   valkey-node2:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node2
     restart: on-failure:3
     command: >
@@ -54,7 +54,7 @@ services:
       retries: 3
 
   valkey-node3:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node3
     restart: on-failure:3
     command: >
@@ -74,7 +74,7 @@ services:
       retries: 3
 
   valkey-node4:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node4
     restart: on-failure:3
     command: >
@@ -94,7 +94,7 @@ services:
       retries: 3
 
   valkey-node5:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node5
     restart: on-failure:3
     command: >
@@ -114,7 +114,7 @@ services:
       retries: 3
 
   valkey-node6:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node6
     restart: on-failure:3
     command: >
@@ -134,7 +134,7 @@ services:
       retries: 3
 
   valkey-cluster-setup:
-    image: valkey/valkey:8.1
+    image: valkey/valkey:latest
     container_name: ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-cluster-setup
     depends_on:
       valkey-node1:
@@ -155,6 +155,17 @@ services:
     command: >
       bash -c '
         echo "Waiting for nodes to be ready..."
+        for i in 1 2 3 4 5 6; do
+          until valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node$$i -p 8080 PING; do
+            echo "Waiting for ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node$$i..."
+            sleep 1
+          done
+        done
         echo "All nodes are ready. Creating cluster..."
+        echo yes | valkey-cli --cluster create ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node2:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node3:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node4:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node5:8080 ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node6:8080 --cluster-replicas 1
+        
+        echo "Cluster setup complete. Checking cluster info..."
+        sleep 5
+        valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER INFO
         valkey-cli -h ${COMPOSE_PROJECT_NAME:-ratelimit_bench}-valkey-node1 -p 8080 CLUSTER NODES
       '
